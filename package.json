@@ -13,7 +13,12 @@
     "lint": "eslint src --ext .ts",
     "format": "prettier --write src/**/*.ts"
   },
-  "keywords": ["dat", "rom", "preservation", "template"],
+  "keywords": [
+    "dat",
+    "rom",
+    "preservation",
+    "template"
+  ],
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -23,5 +28,9 @@
     "prettier": "^3.0.0",
     "typescript": "^5.0.0",
     "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "@octokit/rest": "^22.0.1",
+    "fast-xml-parser": "^5.5.11"
   }
 }
