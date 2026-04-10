@@ -14,12 +14,12 @@ export interface ICompressor {
    * @param outputPath Path for output artifact
    * @returns Artifact with metadata
    */
-  compress(dats: DAT[], outputPath: string): Promise<Artifact>;
+  compress(_dats: DAT[], _outputPath: string): Promise<Artifact>;
 
   /**
    * Train compression dictionary from sample data
    * @param samples Sample DATs to train on
    * @param dictionaryPath Path to save dictionary
    */
-  trainDictionary(samples: DAT[], dictionaryPath: string): Promise<void>;
+  trainDictionary(_samples: DAT[], _dictionaryPath: string): Promise<void>;
 }

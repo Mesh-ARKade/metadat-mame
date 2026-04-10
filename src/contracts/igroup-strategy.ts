@@ -13,7 +13,7 @@ export interface IGroupStrategy {
    * @param dats Array of DATs to group
    * @returns GroupedDATs map of group names to DAT arrays
    */
-  group(dats: DAT[]): GroupedDATs;
+  group(_dats: DAT[]): GroupedDATs;
 
   /**
    * Get the strategy name

@@ -10,8 +10,8 @@ import type { DAT, ValidationResult } from '../types/index.js';
 export interface IValidator {
   /**
    * Validate an array of DAT objects
-   * @param dats Array of DATs to validate
+   * @param _dats Array of DATs to validate
    * @returns ValidationResult with pass/fail status and any errors
    */
-  validate(dats: DAT[]): ValidationResult;
+  validate(_dats: DAT[]): ValidationResult;
 }

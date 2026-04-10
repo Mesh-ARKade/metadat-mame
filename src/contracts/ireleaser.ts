@@ -14,18 +14,18 @@ export interface IReleaser {
    * @param artifacts Array of artifacts to upload
    * @returns Release object with metadata
    */
-  createRelease(tag: string, artifacts: Artifact[]): Promise<Release>;
+  createRelease(_tag: string, _artifacts: Artifact[]): Promise<Release>;
 
   /**
    * Check if a release already exists
-   * @param tag Release tag name
+   * @param _tag Release tag name
    * @returns true if release exists
    */
-  releaseExists(tag: string): Promise<boolean>;
+  releaseExists(_tag: string): Promise<boolean>;
 
   /**
    * Delete a release
-   * @param tag Release tag name
+   * @param _tag Release tag name
    */
-  deleteRelease(tag: string): Promise<void>;
+  deleteRelease(_tag: string): Promise<void>;
 }

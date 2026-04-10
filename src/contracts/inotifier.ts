@@ -12,5 +12,5 @@ export interface INotifier {
    * Send a notification for a pipeline event
    * @param event Pipeline event to notify about
    */
-  notify(event: PipelineEvent): Promise<void>;
+  notify(_event: PipelineEvent): Promise<void>;
 }
