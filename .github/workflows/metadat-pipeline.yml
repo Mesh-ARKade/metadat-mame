@@ -1,0 +1,115 @@
+name: METADAT Pipeline
+
+on:
+  schedule:
+    # Daily at 09:00 UTC
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Dry run mode (no release)'
+        required: false
+        default: 'false'
+        type: boolean
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint || true
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build TypeScript
+        run: npm run build
+
+  run-pipeline:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for updates (version check)
+        id: version-check
+        run: |
+          echo "Checking for updates..."
+          # Source-specific version check logic would go here
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Run pipeline (if not skipped)
+        if: steps.version-check.outputs.skip == 'false'
+        run: |
+          if [ "${{ github.event.inputs.dry-run }}" == "true" ]; then
+            echo "Running in dry-run mode..."
+            # npm run pipeline -- --dry-run
+          else
+            echo "Running full pipeline..."
+            # npm run pipeline
+          fi
+
+      - name: Upload artifacts
+        if: steps.version-check.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts
+          path: output/*.jsonl.zst
+          retention-days: 7
+
+      - name: Create GitHub Release
+        if: steps.version-check.outputs.skip == 'false' && github.event.inputs.dry-run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # gh release create ...
+          echo "Creating release..."
+
+      - name: Send Discord notification (success)
+        if: steps.version-check.outputs.skip == 'false' && success()
+        run: |
+          echo "Sending success notification..."
+
+      - name: Send Discord notification (failure)
+        if: failure()
+        run: |
+          echo "Sending failure notification..."
+
+  skip-notification:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Send skip notification
+        run: |
+          echo "No updates found, skipping pipeline..."
+
+      - name: Send Discord notification (skipped)
+        run: |
+          echo "Sending skipped notification..."
