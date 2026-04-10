@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<datafile>
+  <header>
+    <name>Test System</name>
+    <description>Test System DAT</description>
+  </header>
+  <game name="Test Game 1">
+    <description>Test Game 1</description>
+    <rom name="test1.bin" size="1024" crc="a1b2c3d4" />
+  </game>
+  <game name="Test Game 2">
+    <description>Test Game 2</description>
+    <rom name="test2.bin" size="2048" crc="e5f6g7h8" />
+  </game>
+</datafile>
