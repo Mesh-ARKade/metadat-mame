@@ -1,25 +1,13 @@
 {
   "no-intro": {
     "version": "",
-    "lastChecked": "2026-04-11T02:17:38.854Z",
+    "lastChecked": "2026-04-11T02:20:41.212Z",
     "artifacts": {
       "b.json.zst": "sha2"
     }
   },
-  "test-fetcher-version-1775873859026": {
+  "test-fetcher-version-1775874041379": {
     "version": "1.5.0",
-    "lastChecked": "2026-04-11T02:17:39.027Z"
-  },
-  "test-skip-match-1775873875997": {
-    "version": "1.0.0",
-    "lastChecked": "2026-04-11T02:17:55.997Z"
-  },
-  "test-skip-diff-1775873876002": {
-    "version": "1.0.0",
-    "lastChecked": "2026-04-11T02:17:56.002Z"
-  },
-  "test-fetcher-version-1775873876172": {
-    "version": "1.5.0",
-    "lastChecked": "2026-04-11T02:17:56.172Z"
+    "lastChecked": "2026-04-11T02:20:41.379Z"
   }
 }
