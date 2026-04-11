@@ -50,10 +50,14 @@ export interface Artifact {
   sha256: string;
   /** Number of games/entries in this artifact */
   entryCount: number;
+  /** Operation type for incremental updates */
+  op?: 'upsert' | 'unchanged';
   /** Optional URL if uploaded to a release */
   url?: string;
   /** Optional dictionary path used for compression */
   dictionary?: string;
+  /** Systems included in this artifact (per manifest schema) */
+  systems?: Array<{ id: string; name: string; gameCount: number }>;
 }
 
 export interface PipelineEvent {
@@ -73,6 +77,16 @@ export interface PipelineEvent {
   error?: string;
   /** Optional version info */
   version?: string;
+  /** Optional description text */
+  description?: string;
+  /** Optional skip reason (used when type is 'skipped') */
+  skipReason?: string;
+  /** Optional link to GitHub Action run */
+  actionUrl?: string;
+  /** Optional link to release */
+  releaseUrl?: string;
+  /** Optional stats table markdown (for success notifications) */
+  stats?: Array<{ metric: string; value: string }>;
 }
 
 export interface ValidationResult {
@@ -123,4 +137,6 @@ export interface VersionInfo {
   version: string;
   /** ISO timestamp of last check */
   lastChecked: string;
+  /** Artifact SHA256 hashes for incremental releases */
+  artifacts?: Record<string, string>;
 }

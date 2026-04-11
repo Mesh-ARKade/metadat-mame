@@ -66,6 +66,36 @@ export class VersionTracker {
   }
 
   /**
+   * Save artifact SHA256 hashes for incremental releases
+   * @param source Source name
+   * @param artifacts Map of artifact name to SHA256 hash
+   */
+  async saveArtifactHashes(source: string, artifacts: Record<string, string>): Promise<void> {
+    const data = this.readAll();
+    
+    if (!data[source]) {
+      data[source] = { version: '', lastChecked: '' };
+    }
+    
+    data[source].artifacts = artifacts;
+    data[source].lastChecked = new Date().toISOString();
+
+    const dir = path.dirname(this.filePath);
+    await fsPromises.mkdir(dir, { recursive: true }).catch(() => {});
+    await fsPromises.writeFile(this.filePath, JSON.stringify(data, null, 2) + '\n');
+  }
+
+  /**
+   * Get artifact SHA256 hashes for a source
+   * @param source Source name
+   * @returns Map of artifact name to SHA256 hash, or empty object if not found
+   */
+  async getArtifactHashes(source: string): Promise<Record<string, string>> {
+    const info = this.read(source);
+    return info?.artifacts || {};
+  }
+
+  /**
    * Read all version data (synchronous)
    */
   private readAll(): Record<string, VersionInfo> {

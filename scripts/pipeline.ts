@@ -6,12 +6,20 @@
  */
 
 import { parseArgs } from 'util';
+import fs from 'fs/promises';
 import { VersionTracker } from '../src/core/version-tracker.js';
 import { validateFile, checkExtension } from '../src/core/validator.js';
 import { compress } from '../src/core/compressor.js';
 import { GitHubReleaser } from '../src/core/releaser.js';
 import { DiscordNotifier } from '../src/core/notifier.js';
 import type { DAT, Artifact, PipelineEvent } from '../src/types/index.js';
+
+/**
+ * Convert a string to a URL-safe slug
+ */
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
 
 interface PipelineOptions {
   dryRun: boolean;
@@ -81,6 +89,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       const tag = `metadat-${options.source}-${new Date().toISOString().split('T')[0]}`;
       const release = await releaser.createRelease(tag, artifacts);
       console.log(`[pipeline] Release created: ${release.htmlUrl}`);
+      
+      // Export environment variables for downstream steps
+      if (process.env.GITHUB_ENV) {
+        await fs.appendFile(process.env.GITHUB_ENV, `RELEASE_URL=${release.htmlUrl}\n`);
+        await fs.appendFile(process.env.GITHUB_ENV, `ARTIFACT_COUNT=${artifacts.length}\n`);
+      }
     }
     
     const duration = Math.floor((Date.now() - startTime) / 1000);
