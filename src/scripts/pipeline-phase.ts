@@ -77,6 +77,7 @@ async function runPhase(options: PhaseOptions): Promise<void> {
       const fetcher: any = null; // Remove this line when implementing
       
       if (!fetcher) {
+        console.warn('Note: versionTracker initialized:', versionTracker !== null);
         throw new Error('Fetcher not implemented in template. Please implement your source fetcher.');
       }
 
