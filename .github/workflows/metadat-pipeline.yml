@@ -27,7 +27,17 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      # === BUILD ===
+      # === NOTIFY STARTED ===
+      - name: Notify started
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+        run: |
+          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"embeds\":[{\"title\":\"⏩ MAME Pipeline Started\",\"description\":\"Fetching MAME DATs from ProgettoSnaps...\",\"color\":16776960,\"url\":\"$GITHUB_SERVER_URL/Mesh-ARKade/metadat-mame/actions/runs/$GITHUB_RUN_ID\",\"footer\":{\"text\":\"Mesh-ARKade/metadat-mame\"}}]}"
+
       - name: Install dependencies
         run: npm ci
 
@@ -113,14 +123,14 @@ jobs:
           path: output/metadat-mame--error-playwright.png
           retention-days: 7
 
-      # === NOTIFY RESULT (node) ===
+      # === NOTIFY RESULT ===
       - name: Notify skipped
         if: success() && env.SKIP_PIPELINE == 'true'
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: node dist/core/notify.js skipped mame || true
 
-      - name: Notify success (node)
+      - name: Notify success
         if: success() && env.SKIP_PIPELINE != 'true'
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
