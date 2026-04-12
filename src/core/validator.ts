@@ -150,8 +150,9 @@ async function processStream(stream: fsSync.ReadStream, sourceType: string, onEn
   let softwarelistName = '';
 
   return new Promise((resolve, reject) => {
-    stream.on('data', (chunk: string) => {
-      buffer += chunk;
+    stream.on('data', (chunk: string | Buffer) => {
+      const textChunk = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+      buffer += textChunk;
       
       if (!softwarelistName) {
         const listMatch = buffer.match(/<softwarelist[^>]*name=["']([^"']+)["']/);
