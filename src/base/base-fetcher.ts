@@ -31,8 +31,9 @@ export abstract class AbstractFetcher implements IFetcher {
 
   /**
    * Fetch DATs from the source - implemented by subclasses
+   * @param onEntry Optional callback for streaming entries during fetch
    */
-  abstract fetchDats(): Promise<DAT[]>;
+  abstract fetchDats(onEntry?: (dat: DAT) => void): Promise<DAT[]>;
 
   /**
    * Get source name - implemented by subclasses
@@ -46,10 +47,11 @@ export abstract class AbstractFetcher implements IFetcher {
 
   /**
    * Main fetch method with retry and rate limiting
+   * @param onEntry Optional callback for streaming entries during fetch
    */
-  async fetch(): Promise<DAT[]> {
+  async fetch(onEntry?: (dat: DAT) => void): Promise<DAT[]> {
     await this.applyRateLimit();
-    return this.executeWithRetry(() => this.fetchDats());
+    return this.executeWithRetry(() => this.fetchDats(onEntry));
   }
 
   /**

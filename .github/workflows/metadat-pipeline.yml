@@ -118,7 +118,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-error
-          path: output/playwright-error.png
+          path: output/metadat-mame--error-playwright.png
           retention-days: 7
 
       # === NOTIFY RESULT (node) ===
