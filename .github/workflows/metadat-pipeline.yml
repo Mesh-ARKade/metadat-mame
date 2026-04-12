@@ -27,23 +27,15 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      # === NOTIFY STARTED (curl) ===
-      - name: Notify started
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          GITHUB_SERVER_URL: ${{ github.server_url }}
-        run: |
-          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d "{\"embeds\":[{\"title\":\"⏩ MAME Pipeline Started\",\"description\":\"Fetching latest MAME, Software Lists, and HBMAME DATs...\",\"color\":16776960,\"url\":\"$GITHUB_SERVER_URL/Mesh-ARKade/metadat-mame/actions/runs/$GITHUB_RUN_ID\",\"footer\":{\"text\":\"Mesh-ARKade/metadat-mame\"}}]}"
-
       # === BUILD ===
       - name: Install dependencies
         run: npm ci
 
       - name: Install Playwright browsers
         run: npx playwright install chromium
+
+      - name: Install 7z for archive extraction
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
       - name: Build TypeScript
         run: npm run build

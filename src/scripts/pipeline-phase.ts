@@ -83,9 +83,11 @@ async function runPhase(options: PhaseOptions): Promise<void> {
 
       const shouldSkip = await fetcher.shouldSkip();
       if (shouldSkip) {
-        console.log('[phase:fetch] Already on latest version, skipping...');
+        const storedVersion = fetcher.getStoredVersion();
+        const msg = `[phase:fetch] No new DATs available (version ${storedVersion} unchanged), skipping pipeline...`;
+        console.log(msg);
         if (process.env.GITHUB_ENV) {
-          await fs.appendFile(process.env.GITHUB_ENV, 'SKIP_PIPELINE=true\n');
+          await fs.appendFile(process.env.GITHUB_ENV, `SKIP_PIPELINE=true\nSKIP_REASON=${encodeURIComponent(msg)}\n`);
         }
         process.exit(0);
       }
@@ -104,6 +106,12 @@ async function runPhase(options: PhaseOptions): Promise<void> {
       });
       
       await new Promise((resolve) => writeStream.end(resolve));
+      
+      // Check if we got any entries
+      if (count === 0) {
+        throw new Error('No DATs fetched - source may be unavailable or parse failed');
+      }
+      
       console.log(`[phase:fetch] Completed. Streamed ${count} entries to ${fetchPath}`);
       
       state.fetchPath = fetchPath;

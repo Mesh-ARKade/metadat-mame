@@ -169,25 +169,27 @@ export class MameFetcher extends AbstractFetcher {
   }
 
   /**
-   * Extract 7z file - tries 7z, then fallback to other methods
+   * Extract 7z file - tries 7z with retries
    */
-  private async extract7z(archivePath: string, destDir: string): Promise<void> {
-    try {
-      // Try 7z command first
-      execSync(`7z x "${archivePath}" -o"${destDir}" -y`, { stdio: 'inherit' });
-    } catch {
+  private async extract7z(archivePath: string, destDir: string, retries = 3): Promise<void> {
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        // Try p7zip on WSL or other tools
-        execSync(`7za x "${archivePath}" -o"${destDir}" -y`, { stdio: 'inherit' });
-      } catch {
-        // Try Windows PowerShell Expand
-        try {
-          execSync(`powershell -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force"`, { stdio: 'inherit' });
-        } catch (err) {
-          throw new Error(`Failed to extract archive: ${(err as Error).message}`);
+        console.log(`[mame] Extracting ${path.basename(archivePath)} (attempt ${attempt}/${retries})...`);
+        execSync(`7z x "${archivePath}" -o"${destDir}" -y`, { stdio: 'inherit' });
+        console.log('[mame] Extraction complete');
+        return;
+      } catch (err) {
+        lastError = err as Error;
+        console.warn(`[mame] Extraction attempt ${attempt} failed: ${lastError.message}`);
+        if (attempt < retries) {
+          await new Promise(r => setTimeout(r, 2000));
         }
       }
     }
+    
+    throw new Error(`Failed to extract archive after ${retries} attempts: ${lastError?.message}`);
   }
 
   /**
