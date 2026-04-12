@@ -68,10 +68,25 @@ export function extractGameEntries(content: string): ExtractResult {
     const parsed = parser.parse(content);
     const games: GameEntry[] = [];
 
-    if (parsed.datafile?.game) extractDatafileGames(parsed.datafile.game, games);
-    else if (parsed.mame?.machine) extractMameMachines(parsed.mame.machine, games);
-    else if (parsed.mame?.game) extractMameMachines(parsed.mame.game, games);
-    else if (parsed.softwarelist?.software) extractSoftwareList(parsed.softwarelist.software, games, parsed.softwarelist['@_name']);
+    // Try multiple formats
+    if (parsed.datafile?.game) {
+      extractDatafileGames(parsed.datafile.game, games);
+    } else if (parsed.mame?.machine) {
+      extractMameMachines(parsed.mame.machine, games);
+    } else if (parsed.mame?.game) {
+      extractMameMachines(parsed.mame.game, games);
+    } else if (parsed.softwarelist?.software) {
+      extractSoftwareList(parsed.softwarelist.software, games, parsed.softwarelist['@_name']);
+    } else if (parsed.mame) {
+      // MAME root - try to find games/machines at any level
+      extractAllMameEntries(parsed.mame, games);
+    } else if (parsed.datafile) {
+      // Generic datafile - try anything inside
+      extractGenericDatafile(parsed.datafile, games);
+    } else {
+      // Last resort: extract from parsed object directly
+      extractDirectEntries(parsed, games);
+    }
 
     return { valid: true, games };
   } catch (err) {
@@ -282,6 +297,96 @@ function extractSoftwareList(data: unknown, games: GameEntry[], listName?: strin
   for (const s of arr) if (s && typeof s === 'object') {
     const n = s['@_name'] || (s as any).name;
     if (n) games.push({ name: n, description: (s as any).description, year: (s as any).year, publisher: (s as any).publisher, softwarelist: listName, ...(s as Record<string, unknown>) });
+  }
+}
+
+/**
+ * Recursively extract all entries from MAME XML
+ */
+function extractAllMameEntries(obj: unknown, games: GameEntry[]): void {
+  if (!obj || typeof obj !== 'object') return;
+  const o = obj as Record<string, unknown>;
+  
+  // Check for machine/game at this level
+  if (o.machine) extractMameMachines(o.machine as unknown, games);
+  else if (o.game) extractMameMachines(o.game as unknown, games);
+  else if (o.machines) extractAllMameEntries(o.machines, games);
+  else if (o.games) extractAllMameEntries(o.games, games);
+  
+  // Recurse into children
+  for (const [key, value] of Object.entries(o)) {
+    if (value && typeof value === 'object' && key !== 'machine' && key !== 'game' && key !== 'machines' && key !== 'games') {
+      extractAllMameEntries(value, games);
+    }
+  }
+}
+
+/**
+ * Generic datafile extraction
+ */
+function extractGenericDatafile(datafile: unknown, games: GameEntry[]): void {
+  if (!datafile || typeof datafile !== 'object') return;
+  const d = datafile as Record<string, unknown>;
+  
+  // Try common container names
+  const containers = ['game', 'machine', 'software', 'entry', 'item', 'record'];
+  for (const key of Object.keys(d)) {
+    if (containers.includes(key.toLowerCase())) {
+      const data = d[key];
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (item && typeof item === 'object') {
+            const entry = item as Record<string, unknown>;
+            const name = entry['@_name'] || entry.name || entry['@name'];
+            if (name) games.push({ name: String(name), description: String(entry.description || ''), ...entry });
+          }
+        }
+      } else if (data && typeof data === 'object') {
+        const entry = data as Record<string, unknown>;
+        const name = entry['@_name'] || entry.name || entry['@name'];
+        if (name) games.push({ name: String(name), description: String(entry.description || ''), ...entry });
+      }
+    }
+  }
+}
+
+/**
+ * Last resort: extract entries directly from parsed object
+ */
+function extractDirectEntries(obj: unknown, games: GameEntry[]): void {
+  if (!obj || typeof obj !== 'object') return;
+  const o = obj as Record<string, unknown>;
+  
+  // Look for arrays of objects with name-like properties
+  for (const [key, value] of Object.entries(o)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item === 'object') {
+          const entry = item as Record<string, unknown>;
+          const name = entry['@_name'] || entry.name || entry['@name'] || entry.id;
+          if (name) {
+            games.push({
+              name: String(name),
+              description: String(entry.description || entry.title || ''),
+              source: 'mame',
+              ...entry
+            });
+          }
+        }
+      }
+    } else if (value && typeof value === 'object') {
+      // Single object
+      const entry = value as Record<string, unknown>;
+      const name = entry['@_name'] || entry.name || entry['@name'] || entry.id;
+      if (name) {
+        games.push({
+          name: String(name),
+          description: String(entry.description || entry.title || ''),
+          source: 'mame',
+          ...entry
+        });
+      }
+    }
   }
 }
 
