@@ -133,7 +133,7 @@ export class MameFetcher extends AbstractFetcher {
         
         let count = 0;
         const entryCallback = (entry: GameEntry) => {
-          const dat = this.gameEntryToDat(entry, source.type === MameSourceType.ARCADE ? 'arcade' : (entry.softwarelist || source.type));
+          const dat = this.gameEntryToDat(entry, source.type === MameSourceType.ARCADE ? 'arcade' : ((entry.softwarelist as string) || source.type));
           count++;
           if (onEntry) {
             onEntry(dat);
