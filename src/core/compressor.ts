@@ -3,13 +3,89 @@
  *
  * @intent Compress DAT data to artifacts using zstd with optional dictionary
  * @guarantee Uses Node 22 built-in zstd support, handles large files
+ *           Uses immutable dictionary from src/data/catalog.dict if available
  */
 
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import zlib from 'zlib';
 import path from 'path';
 import crypto from 'crypto';
 import type { Artifact } from '../types/index.js';
+
+// Immutable dictionary path - if this file exists, use it instead of training
+const IMMUTABLE_DICT_PATH = 'src/data/catalog.dict';
+
+/**
+ * Check if immutable dictionary exists and load it
+ * @returns Dictionary buffer or null if not found
+ */
+export async function getImmutableDictionary(): Promise<Buffer | null> {
+  try {
+    if (fsSync.existsSync(IMMUTABLE_DICT_PATH)) {
+      console.log(`[compressor] Using immutable dictionary: ${IMMUTABLE_DICT_PATH}`);
+      return await fs.readFile(IMMUTABLE_DICT_PATH);
+    }
+  } catch (err) {
+    console.warn(`[compressor] Failed to load immutable dictionary: ${(err as Error).message}`);
+  }
+  return null;
+}
+
+/**
+ * Check if immutable dictionary exists (sync version for quick checks)
+ */
+export function hasImmutableDictionary(): boolean {
+  return fsSync.existsSync(IMMUTABLE_DICT_PATH);
+}
+
+/**
+ * Compress content using the immutable dictionary if available
+ * @param content Content to compress
+ * @param outputPath Output file path
+ * @returns Artifact with metadata
+ */
+export async function compressWithImmutableDict(
+  content: string,
+  outputPath: string
+): Promise<Artifact> {
+  const dictionary = await getImmutableDictionary();
+  
+  if (!dictionary) {
+    // No dictionary available, use standard compression
+    console.log('[compressor] No immutable dictionary found, using standard compression');
+    return compress(content, outputPath);
+  }
+  
+  // Use immutable dictionary for compression
+  const contentBuffer = Buffer.from(content, 'utf-8');
+  
+  const compressed = zlib.zstdCompressSync(contentBuffer, {
+    level: 19,
+    dictionary: dictionary
+  } as zlib.ZstdOptions);
+  
+  // Ensure output directory exists
+  await fs.mkdir(path.dirname(outputPath), { recursive: true }).catch(() => {});
+  
+  // Write compressed file
+  await fs.writeFile(outputPath, compressed);
+  
+  // Calculate SHA-256
+  const sha256 = crypto.createHash('sha256').update(compressed).digest('hex');
+  
+  // Count entries
+  const entryCount = content.split('\n').filter(line => line.trim().length > 0).length;
+  
+  return {
+    name: path.basename(outputPath),
+    path: outputPath,
+    size: compressed.length,
+    sha256,
+    entryCount,
+    dictionary: IMMUTABLE_DICT_PATH
+  };
+}
 
 /**
  * Compress content to a .zst file using Node 22's built-in zstd

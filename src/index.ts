@@ -18,3 +18,15 @@ export type { ICompressor } from './contracts/icompressor.js';
 export type { IGroupStrategy } from './contracts/igroup-strategy.js';
 export type { IReleaser } from './contracts/ireleaser.js';
 export type { INotifier } from './contracts/inotifier.js';
+
+// Re-export Zod schemas for pipeline state validation
+export {
+  RomEntrySchema,
+  DATSchema,
+  ArtifactSchema,
+  FetchPhaseStateSchema,
+  GroupPhaseStateSchema,
+  CompressPhaseStateSchema,
+  PipelineStateSchema,
+  validatePipelineState
+} from './types/index.js';

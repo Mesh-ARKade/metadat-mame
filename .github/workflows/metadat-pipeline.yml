@@ -2,7 +2,6 @@ name: METADAT Pipeline
 
 on:
   schedule:
-    # Daily at 09:00 UTC
     - cron: '0 9 * * *'
   workflow_dispatch:
     inputs:
@@ -15,11 +14,10 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  pipeline:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
+      # === SETUP ===
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -29,87 +27,116 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      # === NOTIFY STARTED (curl) ===
+      - name: Notify started
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+        run: |
+          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"embeds\":[{\"title\":\"⏩ MAME Pipeline Started\",\"description\":\"Fetching latest MAME, Software Lists, and HBMAME DATs...\",\"color\":16776960,\"url\":\"$GITHUB_SERVER_URL/Mesh-ARKade/metadat-mame/actions/runs/$GITHUB_RUN_ID\",\"footer\":{\"text\":\"Mesh-ARKade/metadat-mame\"}}]}"
+
+      # === BUILD ===
       - name: Install dependencies
         run: npm ci
 
-      - name: Run linter
-        run: npm run lint || true
-
-      - name: Run tests
-        run: npm test
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
 
       - name: Build TypeScript
         run: npm run build
 
-  run-pipeline:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      # === PIPELINE PHASES ===
+      - name: Phase 1 - Fetch DATs
+        env:
+          GITHUB_OWNER: Mesh-ARKade
+        run: node dist/scripts/pipeline-phase.js --source mame --phase fetch
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+      - name: Phase 2 - Group DATs
+        if: env.SKIP_PIPELINE != 'true'
+        run: node dist/scripts/pipeline-phase.js --source mame --phase group
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Phase 3 - Train Dictionary
+        if: env.SKIP_PIPELINE != 'true'
+        run: node dist/scripts/pipeline-phase.js --source mame --phase dict || echo "Dictionary skipped"
 
-      - name: Check for updates (version check)
-        id: version-check
+      - name: Auto-commit immutable dictionary
+        if: env.SKIP_PIPELINE != 'true'
         run: |
-          echo "Checking for updates..."
-          # Source-specific version check logic would go here
-          echo "skip=false" >> $GITHUB_OUTPUT
-
-      - name: Run pipeline (if not skipped)
-        if: steps.version-check.outputs.skip == 'false'
-        run: |
-          if [ "${{ github.event.inputs.dry-run }}" == "true" ]; then
-            echo "Running in dry-run mode..."
-            # npm run pipeline -- --dry-run
+          if [[ `git status --porcelain src/data/catalog.dict` ]]; then
+            git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config --local user.name "github-actions[bot]"
+            git add src/data/catalog.dict
+            git commit -m "chore: save immutable zstd dictionary [skip ci]"
+            git push
           else
-            echo "Running full pipeline..."
-            # npm run pipeline
+            echo "No dictionary changes to commit."
           fi
 
+      - name: Phase 4 - Create JSONL
+        if: env.SKIP_PIPELINE != 'true'
+        run: node dist/scripts/pipeline-phase.js --source mame --phase jsonl
+
+      - name: Phase 5 - Compress
+        if: env.SKIP_PIPELINE != 'true'
+        run: node dist/scripts/pipeline-phase.js --source mame --phase compress
+
+      - name: Phase 6 - Create Release
+        if: env.SKIP_PIPELINE != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITHUB_REPO: metadat-mame
+        run: node dist/scripts/pipeline-phase.js --source mame --phase release
+
+      # === TRIGGER METADAT-MAIN AGGREGATION ===
+      - name: Trigger metadat-main aggregation
+        if: success() && env.SKIP_PIPELINE != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/Mesh-ARKade/metadat-main/dispatches \
+            -d '{"event_type":"source-released","client_payload":{"source":"mame","release":"mame-'$(date +%Y-%m-%d)'"}}'
+
+      # === UPLOAD ARTIFACTS ===
       - name: Upload artifacts
-        if: steps.version-check.outputs.skip == 'false'
+        if: env.SKIP_PIPELINE != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: artifacts
-          path: output/*.jsonl.zst
+          name: output
+          path: |
+            output/*.jsonl.zst
+            output/manifest.json
+
+      # === UPLOAD ERROR SCREENSHOT ON FAILURE ===
+      - name: Upload error screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-error
+          path: output/playwright-error.png
           retention-days: 7
 
-      - name: Create GitHub Release
-        if: steps.version-check.outputs.skip == 'false' && github.event.inputs.dry-run != 'true'
+      # === NOTIFY RESULT (node) ===
+      - name: Notify skipped
+        if: success() && env.SKIP_PIPELINE == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # gh release create ...
-          echo "Creating release..."
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: node dist/core/notify.js skipped mame || true
 
-      - name: Send Discord notification (success)
-        if: steps.version-check.outputs.skip == 'false' && success()
-        run: |
-          echo "Sending success notification..."
+      - name: Notify success (node)
+        if: success() && env.SKIP_PIPELINE != 'true'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: node dist/core/notify.js success mame || true
 
-      - name: Send Discord notification (failure)
+      - name: Notify failure
         if: failure()
-        run: |
-          echo "Sending failure notification..."
-
-  skip-notification:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    steps:
-      - name: Send skip notification
-        run: |
-          echo "No updates found, skipping pipeline..."
-
-      - name: Send Discord notification (skipped)
-        run: |
-          echo "Sending skipped notification..."
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PIPELINE_ERROR: "Pipeline failed. Check GitHub Actions Artifacts for `playwright-error.png` screenshot."
+        run: node dist/core/notify.js failure mame || true

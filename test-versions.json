@@ -1,13 +1,17 @@
 {
   "no-intro": {
     "version": "",
-    "lastChecked": "2026-04-11T02:20:41.212Z",
+    "lastChecked": "2026-04-11T23:32:11.420Z",
     "artifacts": {
       "b.json.zst": "sha2"
     }
   },
-  "test-fetcher-version-1775874041379": {
+  "test-fetcher-version-1775950331535": {
     "version": "1.5.0",
-    "lastChecked": "2026-04-11T02:20:41.379Z"
+    "lastChecked": "2026-04-11T23:32:11.535Z"
+  },
+  "mame": {
+    "version": "unknown",
+    "lastChecked": "2026-04-11T23:32:17.376Z"
   }
 }

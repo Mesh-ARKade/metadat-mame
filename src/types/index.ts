@@ -6,6 +6,8 @@
  * @constraint Do not add methods or logic - only data shapes
  */
 
+import { z } from 'zod';
+
 export interface RomEntry {
   name: string;
   size: number;
@@ -139,4 +141,102 @@ export interface VersionInfo {
   lastChecked: string;
   /** Artifact SHA256 hashes for incremental releases */
   artifacts?: Record<string, string>;
+}
+
+// ============================================================================
+// Pipeline State Zod Schemas
+// ============================================================================
+
+/**
+ * Zod schema for RomEntry validation
+ */
+export const RomEntrySchema = z.object({
+  name: z.string(),
+  size: z.number().int().nonnegative(),
+  crc: z.string().optional(),
+  md5: z.string().optional(),
+  sha1: z.string().optional(),
+  sha256: z.string().optional()
+});
+
+/**
+ * Zod schema for DAT validation
+ */
+export const DATSchema = z.object({
+  id: z.string().min(1),
+  source: z.string().min(1),
+  system: z.string().min(1),
+  datVersion: z.string().datetime(),
+  roms: z.array(RomEntrySchema),
+  description: z.string().optional(),
+  category: z.string().optional(),
+  filePath: z.string().optional()
+});
+
+/**
+ * Zod schema for Artifact validation
+ */
+export const ArtifactSchema = z.object({
+  name: z.string().min(1),
+  path: z.string(),
+  size: z.number().int().nonnegative(),
+  sha256: z.string().length(64), // SHA-256 is always 64 hex chars
+  entryCount: z.number().int().nonnegative(),
+  op: z.enum(['upsert', 'unchanged']).optional(),
+  url: z.string().url().optional(),
+  dictionary: z.string().optional(),
+  systems: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    gameCount: z.number().int().nonnegative()
+  })).optional()
+});
+
+/**
+ * Pipeline state schema for fetch phase
+ */
+export const FetchPhaseStateSchema = z.object({
+  source: z.string().min(1),
+  dats: z.array(DATSchema).optional(),
+  version: z.string().optional(),
+  fetchedAt: z.string().datetime().optional()
+});
+
+/**
+ * Pipeline state schema for group phase
+ */
+export const GroupPhaseStateSchema = z.object({
+  source: z.string().min(1),
+  dats: z.array(DATSchema).optional(),
+  groupedDats: z.record(z.string(), z.array(DATSchema)).optional(),
+  groupedAt: z.string().datetime().optional()
+});
+
+/**
+ * Pipeline state schema for compress phase
+ */
+export const CompressPhaseStateSchema = z.object({
+  source: z.string().min(1),
+  groupedDats: z.record(z.string(), z.array(DATSchema)).optional(),
+  artifacts: z.array(ArtifactSchema).optional(),
+  dictPath: z.string().optional(),
+  compressedAt: z.string().datetime().optional()
+});
+
+/**
+ * Union of all pipeline phase states
+ */
+export const PipelineStateSchema = z.discriminatedUnion('phase', [
+  z.object({ phase: z.literal('fetch'), ...FetchPhaseStateSchema.shape }),
+  z.object({ phase: z.literal('group'), ...GroupPhaseStateSchema.shape }),
+  z.object({ phase: z.literal('compress'), ...CompressPhaseStateSchema.shape })
+]);
+
+/**
+ * Validate pipeline state file
+ * @param state State object to validate
+ * @throws ZodError if validation fails
+ */
+export function validatePipelineState(state: unknown): void {
+  PipelineStateSchema.parse(state);
 }
