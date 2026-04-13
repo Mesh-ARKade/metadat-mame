@@ -178,8 +178,41 @@ export class DiscordNotifier {
    * Format stats as markdown table per S8 spec
    */
   private formatStatsTable(stats: Array<{ metric: string; value: string }>): string {
-    const rows = stats.map(s => `| ${s.metric} | ${s.value} |`).join('\n');
-    return `\n${rows}\n`;
+    const barLength = 12;
+    const metricWidth = Math.max(...stats.map(s => s.metric.length));
+    const valueWidth = Math.max(...stats.map(s => s.value.length));
+
+    const rows = stats.map(s => {
+      const num = parseInt(s.value.replace(/[^0-9]/g, ''));
+      return { ...s, num: isNaN(num) ? null : num };
+    });
+
+    const numericRows = rows.filter(r => r.num !== null) as Array<{ metric: string; value: string; num: number }>;
+    const nonNumericRows = rows.filter(r => r.num === null);
+
+    const logMax = numericRows.length > 0
+      ? Math.max(...numericRows.map(r => Math.log(r.num + 1)))
+      : 1;
+
+    let chart = '\n```\n';
+
+    for (const row of numericRows) {
+      const metric = row.metric.padEnd(metricWidth);
+      const scale = logMax > 0 ? Math.log(row.num + 1) / logMax : 0;
+      const barLen = Math.round(scale * barLength);
+      const bar = '█'.repeat(barLen) + '░'.repeat(barLength - barLen);
+      chart += `${metric}  ${bar}  ${row.value.padStart(valueWidth)}\n`;
+    }
+
+    if (nonNumericRows.length > 0) {
+      chart += '\n';
+      for (const row of nonNumericRows) {
+        chart += `${row.metric.padEnd(metricWidth)}  ${row.value.padStart(valueWidth)}\n`;
+      }
+    }
+
+    chart += '```\n';
+    return chart;
   }
 
   /**
