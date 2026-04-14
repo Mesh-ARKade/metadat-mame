@@ -130,13 +130,13 @@ export class MameFetcher extends AbstractFetcher {
     await fs.mkdir(extractDir, { recursive: true });
     await this.extract7z(packPath, extractDir);
 
-    // Find and parse the MAME.dat file (search recursively)
+    // Find and parse the main MAME arcade DAT file (search recursively)
     const mameDatPath = await this.findMameDat(extractDir);
     if (!mameDatPath) {
-      console.warn('[mame] MAME.dat not found in extracted pack');
+      console.warn('[mame] Main MAME DAT (e.g., "MAME 0.286.dat") not found in extracted pack');
       return [];
     }
-    console.log(`[mame] Found MAME.dat at: ${mameDatPath}`);
+    console.log(`[mame] Found main arcade DAT: ${path.basename(mameDatPath)}`);
 
     const content = await fs.readFile(mameDatPath, 'utf-8');
     const result = extractGameEntries(content);
@@ -165,7 +165,7 @@ export class MameFetcher extends AbstractFetcher {
     await fs.unlink(packPath).catch(() => {});
     await fs.rm(extractDir, { recursive: true, force: true }).catch(() => {});
 
-    console.log(`[mame] Arcade DAT: ${dats.length} entries`);
+    console.log(`[mame] Arcade entries: ${dats.length}`);
     return dats;
   }
 
@@ -204,18 +204,25 @@ export class MameFetcher extends AbstractFetcher {
   }
 
   /**
-   * Recursively find MAME.dat in extraction directory
+   * Recursively find main MAME arcade DAT in extraction directory
+   * Looks for patterns like "MAME 0.286.dat" in DATs/ folder
    */
   private async findMameDat(dir: string): Promise<string | null> {
     const entries = await fs.readdir(dir, { withFileTypes: true });
 
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
+
       if (entry.isDirectory()) {
         const found = await this.findMameDat(fullPath);
         if (found) return found;
-      } else if (entry.isFile() && entry.name.toLowerCase() === 'mame.dat') {
-        return fullPath;
+      } else if (entry.isFile()) {
+        const lowerName = entry.name.toLowerCase();
+        // Match patterns like "MAME 0.286.dat" or "MAME 0.286 (arcade).dat"
+        // But not MAMEUI or ARCADE-only versions
+        if (lowerName.match(/^mame\s+\d+\.\d+\.dat$/)) {
+          return fullPath;
+        }
       }
     }
 
