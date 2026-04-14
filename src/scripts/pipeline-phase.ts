@@ -218,22 +218,34 @@ async function runPhase(options: PhaseOptions): Promise<void> {
 
       console.log('[phase:dict] Training dictionary (from sampled stream)...');
       if (!state.fetchPath) throw new Error('No fetch data - run fetch phase first');
-      
-      // Sample 1000 entries from the stream
+
+      // First pass: count total lines
+      console.log('[phase:dict] Counting total entries...');
+      const countStream = fsSync.createReadStream(state.fetchPath);
+      const countRl = readline.createInterface({ input: countStream, crlfDelay: Infinity });
+      let totalLines = 0;
+      for await (const _ of countRl) {
+        totalLines++;
+      }
+      console.log(`[phase:dict] Total entries: ${totalLines}`);
+
+      // Second pass: sample at evenly distributed intervals
+      const SAMPLE_SIZE = 1000;
       const samples: string[] = [];
+      const interval = Math.max(1, Math.floor(totalLines / SAMPLE_SIZE));
       const fileStream = fsSync.createReadStream(state.fetchPath);
       const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
-      
-      let count = 0;
+
+      let lineNum = 0;
       for await (const line of rl) {
-        if (count < 1000) {
+        // Sample at regular intervals, plus some randomness to avoid patterns
+        if (lineNum % interval === 0 && samples.length < SAMPLE_SIZE) {
           samples.push(line);
-          count++;
-        } else {
-          break;
         }
+        lineNum++;
       }
-      fileStream.destroy();
+
+      console.log(`[phase:dict] Sampled ${samples.length} entries (every ${interval}th line)`);
 
       const dictPath = path.join(outputDir, `${options.source}.dict`);
       await trainDictionary(samples, dictPath);
