@@ -16,15 +16,6 @@ import type { DAT, RomEntry } from '../types/index.js';
 import { extractGameEntries } from '../core/validator.js';
 
 /**
- * MAME GitHub repository info
- */
-const MAME_REPO = {
-  owner: 'mamedev',
-  repo: 'mame',
-  hashPath: 'hash'
-};
-
-/**
  * ProgettoSnaps main page URL
  * Used to find the latest pack number
  */
@@ -69,7 +60,7 @@ export class MameFetcher extends AbstractFetcher {
    * @returns Latest release tag (e.g., "mame0287")
    */
   async checkRemoteVersion(): Promise<string> {
-    const url = `https://api.github.com/repos/${MAME_REPO.owner}/${MAME_REPO.repo}/releases/latest`;
+    const url = `https://api.github.com/repos/mamedev/mame/releases/latest`;
     const response = await this.fetchWithRetry(url);
     const data = await response.json() as { tag_name: string };
     return data.tag_name;
@@ -86,20 +77,14 @@ export class MameFetcher extends AbstractFetcher {
     const version = await this.checkRemoteVersion();
     console.log(`[mame] MAME version: ${version}`);
 
-    const dats: DAT[] = [];
+    // Fetch all DATs from ProgettoSnaps pack
+    // This includes: arcade, mess (computers/consoles), bios, chd, devices, samples, roms
+    console.log('[mame] Fetching DATs from ProgettoSnaps...');
+    const dats = await this.fetchArcadeDats(version);
 
-    // Fetch arcade DAT from ProgettoSnaps
-    console.log('[mame] Fetching arcade DAT from ProgettoSnaps...');
-    const arcadeDats = await this.fetchArcadeDats(version);
-    for (const dat of arcadeDats) {
-      dats.push(dat);
+    for (const dat of dats) {
       onEntry?.(dat);
     }
-
-    // Fetch hash/ XMLs from GitHub
-    console.log('[mame] Fetching software list XMLs from GitHub...');
-    const hashDats = await this.fetchHashDats(version, onEntry);
-    dats.push(...hashDats);
 
     console.log(`[mame] Total DATs fetched: ${dats.length}`);
 
@@ -110,8 +95,8 @@ export class MameFetcher extends AbstractFetcher {
   }
 
   /**
-   * Fetch arcade DAT from ProgettoSnaps
-   * Finds latest pack, downloads 7z, extracts MAME.dat
+   * Fetch all DATs from ProgettoSnaps pack
+   * Downloads 7z once, extracts arcade, mess, bios, chd, devices, samples, roms
    */
   private async fetchArcadeDats(version: string): Promise<DAT[]> {
     // Find latest pack number from ProgettoSnaps page
@@ -126,47 +111,100 @@ export class MameFetcher extends AbstractFetcher {
     await this.downloadFile(packUrl, packPath);
 
     // Extract the 7z file
-    const extractDir = path.join(this.outputDir, 'arcade-tmp');
+    const extractDir = path.join(this.outputDir, 'progetto-tmp');
     await fs.mkdir(extractDir, { recursive: true });
     await this.extract7z(packPath, extractDir);
 
-    // Find and parse the main MAME arcade DAT file (search recursively)
-    const mameDatPath = await this.findMameDat(extractDir);
-    if (!mameDatPath) {
-      console.warn('[mame] Main MAME DAT (e.g., "MAME 0.286.dat") not found in extracted pack');
-      return [];
-    }
-    console.log(`[mame] Found main arcade DAT: ${path.basename(mameDatPath)}`);
-
-    const content = await fs.readFile(mameDatPath, 'utf-8');
-    const result = extractGameEntries(content);
-
-    if (!result.valid || result.games.length === 0) {
-      console.warn('[mame] Arcade DAT parse failed or empty');
-      return [];
-    }
-
     const dats: DAT[] = [];
-    for (const game of result.games) {
-      const roms = extractRomsFromGame(game);
-      const dat: DAT = {
-        id: `mame-arcade:${game.name}`,
-        source: 'mame',
-        system: MameSystemCategory.ARCADE,
-        datVersion: version,
-        description: game.description || game.name,
-        category: MameSystemCategory.ARCADE,
-        roms
-      };
-      dats.push(dat);
+
+    // Find and parse all DAT files in the pack
+    const datFiles = await this.findAllDatFiles(extractDir);
+    console.log(`[mame] Found ${datFiles.length} DAT files in pack`);
+
+    for (const datPath of datFiles) {
+      const filename = path.basename(datPath);
+      console.log(`[mame] Processing: ${filename}`);
+
+      const content = await fs.readFile(datPath, 'utf-8');
+      const result = extractGameEntries(content);
+
+      if (!result.valid || result.games.length === 0) {
+        console.warn(`[mame] Skipping ${filename} - parse failed or empty`);
+        continue;
+      }
+
+      // Determine category based on filename
+      const category = this.categorizeDatFile(filename);
+
+      for (const game of result.games) {
+        const roms = extractRomsFromGame(game);
+        const dat: DAT = {
+          id: `${filename}:${game.name}`,
+          source: 'mame',
+          system: category,
+          datVersion: version,
+          description: game.description || game.name,
+          category: category,
+          roms
+        };
+        dats.push(dat);
+      }
+
+      console.log(`[mame] ${filename}: ${result.games.length} entries -> ${category}`);
     }
 
     // Cleanup temp files
     await fs.unlink(packPath).catch(() => {});
     await fs.rm(extractDir, { recursive: true, force: true }).catch(() => {});
 
-    console.log(`[mame] Arcade entries: ${dats.length}`);
+    console.log(`[mame] Total ProgettoSnaps entries: ${dats.length}`);
     return dats;
+  }
+
+  /**
+   * Find all .dat files recursively
+   */
+  private async findAllDatFiles(dir: string): Promise<string[]> {
+    const dats: string[] = [];
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const nested = await this.findAllDatFiles(fullPath);
+        dats.push(...nested);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.dat')) {
+        dats.push(fullPath);
+      }
+    }
+
+    return dats;
+  }
+
+  /**
+   * Categorize a DAT file based on its filename
+   */
+  private categorizeDatFile(filename: string): MameSystemCategory {
+    const lower = filename.toLowerCase();
+
+    // Arcade Dats
+    if (lower.includes('(arcade)') || lower === 'arcade' || lower.startsWith('mame ') || lower.startsWith('mameui')) {
+      return MameSystemCategory.ARCADE;
+    }
+
+    // Computer/Console Dats (mess, software lists)
+    if (lower.includes('(mess)') || lower.includes('mess') || lower.includes('software')) {
+      return MameSystemCategory.COMPUTERS; // MESS includes computers and consoles
+    }
+
+    // Supplemental arcade files (bios, chd, devices, samples, roms)
+    if (lower.includes('bios') || lower.includes('chd') || lower.includes('device') ||
+        lower.includes('sample') || lower.includes('rom')) {
+      return MameSystemCategory.ARCADE;
+    }
+
+    // Default to arcade for unknown
+    return MameSystemCategory.ARCADE;
   }
 
   /**
@@ -204,32 +242,6 @@ export class MameFetcher extends AbstractFetcher {
   }
 
   /**
-   * Recursively find main MAME arcade DAT in extraction directory
-   * Looks for patterns like "MAME 0.286.dat" in DATs/ folder
-   */
-  private async findMameDat(dir: string): Promise<string | null> {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        const found = await this.findMameDat(fullPath);
-        if (found) return found;
-      } else if (entry.isFile()) {
-        const lowerName = entry.name.toLowerCase();
-        // Match patterns like "MAME 0.286.dat" or "MAME 0.286 (arcade).dat"
-        // But not MAMEUI or ARCADE-only versions
-        if (lowerName.match(/^mame\s+\d+\.\d+\.dat$/)) {
-          return fullPath;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
    * Extract 7z file using system 7z command
    */
   private async extract7z(archivePath: string, destDir: string, retries = 3): Promise<void> {
@@ -251,83 +263,6 @@ export class MameFetcher extends AbstractFetcher {
     }
 
     throw new Error(`Failed to extract archive after ${retries} attempts: ${lastError?.message}`);
-  }
-
-  /**
-   * Fetch all XML files from mamedev/mame hash/ directory
-   * Categorizes each into computers or consoles
-   */
-  private async fetchHashDats(version: string, onEntry?: (dat: DAT) => void): Promise<DAT[]> {
-    // Get list of XML files from hash/ directory
-    const xmlFiles = await this.listHashFiles();
-    console.log(`[mame] Found ${xmlFiles.length} XML files in hash/`);
-
-    const dats: DAT[] = [];
-    let processed = 0;
-
-    for (const filename of xmlFiles) {
-      try {
-        const category = categorizeHashFile(filename);
-        const url = `https://raw.githubusercontent.com/${MAME_REPO.owner}/${MAME_REPO.repo}/master/hash/${filename}`;
-
-        const response = await this.fetchWithRetry(url);
-        const content = await response.text();
-
-        const result = extractGameEntries(content);
-        if (!result.valid || result.games.length === 0) continue;
-
-        for (const game of result.games) {
-          const roms = extractRomsFromGame(game);
-          const dat: DAT = {
-            id: `${filename.replace('.xml', '')}:${game.name}`,
-            source: 'mame',
-            system: category, // computers or consoles
-            datVersion: version,
-            description: game.description || game.name,
-            category: category,
-            roms
-          };
-          dats.push(dat);
-          onEntry?.(dat);
-        }
-
-        processed++;
-        if (processed % 50 === 0) {
-          console.log(`[mame] Processed ${processed}/${xmlFiles.length} hash files...`);
-        }
-      } catch (err) {
-        console.warn(`[mame] Failed to fetch ${filename}: ${(err as Error).message}`);
-      }
-    }
-
-    console.log(`[mame] Hash DATs: ${dats.length} entries from ${processed} files`);
-    return dats;
-  }
-
-  /**
-   * List all XML files in the hash/ directory via GitHub API
-   */
-  private async listHashFiles(): Promise<string[]> {
-    const url = `https://api.github.com/repos/${MAME_REPO.owner}/${MAME_REPO.repo}/contents/hash`;
-    const headers: Record<string, string> = {
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'metadat-mame-pipeline'
-    };
-    if (this.apiToken) {
-      headers['Authorization'] = `token ${this.apiToken}`;
-    }
-
-    const response = await this.fetchWithRetry(url, { headers });
-    const data = await response.json();
-
-    if (!Array.isArray(data)) {
-      throw new Error(`Unexpected GitHub API response: ${JSON.stringify(data).slice(0, 200)}`);
-    }
-
-    return data
-      .filter((item: { name: string; type: string }) => item.type === 'file' && item.name.endsWith('.xml'))
-      .map((item: { name: string }) => item.name)
-      .sort();
   }
 
   /**
