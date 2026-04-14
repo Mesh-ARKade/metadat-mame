@@ -161,6 +161,13 @@ async function runPhase(options: PhaseOptions): Promise<void> {
       break;
     }
     
+    case 'jsonl': {
+      // JSONL files are already created during group phase
+      // This phase exists for workflow compatibility and future expansion
+      console.log('[phase:jsonl] JSONL files already generated in group phase, skipping...');
+      break;
+    }
+    
     case 'dict': {
       console.log('[phase:dict] Checking for immutable dictionary...');
       if (hasImmutableDictionary()) {

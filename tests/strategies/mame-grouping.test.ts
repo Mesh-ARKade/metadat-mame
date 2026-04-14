@@ -1,12 +1,12 @@
 /**
- * Tests for MAME Grouping Strategy
+ * Tests for MAME Grouping Strategy - 3 Artifact Model
  *
- * @intent Verify grouping by source category (arcade, software-lists, hbmame, multimedia)
- * @guarantee Each DAT is grouped strictly by its functional source category
+ * @intent Verify grouping into 3 artifacts: arcade, computers, consoles
+ * @guarantee Each DAT is grouped by its category field (arcade/computers/consoles)
  */
 
-import { describe, it, expect } from 'vitest';
-import { MameGroupStrategy } from '../../src/strategies/mame-grouping.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { MameGroupStrategy, MameArtifactGroup } from '../../src/strategies/mame-grouping.js';
 import type { DAT } from '../../src/types/index.js';
 
 describe('MameGroupStrategy', () => {
@@ -16,18 +16,18 @@ describe('MameGroupStrategy', () => {
     strategy = new MameGroupStrategy();
   });
 
-  describe('RED: Group identification', () => {
-    it('should identify all four group categories', () => {
+  describe('Group identification', () => {
+    it('should identify all three artifact groups', () => {
       const groups = strategy.getGroupNames();
-      expect(groups).toContain('arcade');
-      expect(groups).toContain('software-lists');
-      expect(groups).toContain('hbmame');
-      expect(groups).toContain('multimedia');
+      expect(groups).toContain(MameArtifactGroup.ARCADE);
+      expect(groups).toContain(MameArtifactGroup.COMPUTERS);
+      expect(groups).toContain(MameArtifactGroup.CONSOLES);
+      expect(groups).toHaveLength(3);
     });
   });
 
-describe('RED: Arcade grouping', () => {
-    it('should group arcade machines together', () => {
+  describe('Arcade grouping', () => {
+    it('should group arcade entries together', () => {
       const dats: DAT[] = [
         {
           id: 'mame:arcade:pacman',
@@ -35,6 +35,7 @@ describe('RED: Arcade grouping', () => {
           system: 'arcade',
           datVersion: '2024-01-01',
           description: 'Pac-Man',
+          category: 'arcade',
           roms: []
         },
         {
@@ -43,155 +44,83 @@ describe('RED: Arcade grouping', () => {
           system: 'arcade',
           datVersion: '2024-01-01',
           description: 'Galaga',
+          category: 'arcade',
           roms: []
         }
       ];
 
       const grouped = strategy.group(dats);
-      
-      expect(grouped['arcade']).toHaveLength(2);
-      expect(grouped['software-lists']).toBeUndefined();
-    });
 
-    it('should include BIOS and device machines in arcade group', () => {
+      expect(grouped[MameArtifactGroup.ARCADE]).toHaveLength(2);
+      expect(grouped[MameArtifactGroup.COMPUTERS]).toBeUndefined();
+      expect(grouped[MameArtifactGroup.CONSOLES]).toBeUndefined();
+    });
+  });
+
+  describe('Computers grouping', () => {
+    it('should group computer entries together', () => {
       const dats: DAT[] = [
         {
-          id: 'mame:arcade:neogeo',
+          id: 'mame:c64:game1',
           source: 'mame',
-          system: 'arcade',
+          system: 'computers',
           datVersion: '2024-01-01',
-          description: 'Neo-Geo BIOS',
-          roms: [],
-          category: 'BIOS'
+          description: 'C64 Game',
+          category: 'computers',
+          roms: []
         },
         {
-          id: 'mame:arcade:z80',
+          id: 'mame:amiga:game2',
           source: 'mame',
-          system: 'arcade',
+          system: 'computers',
           datVersion: '2024-01-01',
-          description: 'Z80 CPU',
-          roms: [],
-          category: 'Device'
+          description: 'Amiga Game',
+          category: 'computers',
+          roms: []
         }
       ];
 
       const grouped = strategy.group(dats);
-      
-      expect(grouped['arcade']).toHaveLength(2);
+
+      expect(grouped[MameArtifactGroup.COMPUTERS]).toHaveLength(2);
+      expect(grouped[MameArtifactGroup.ARCADE]).toBeUndefined();
+      expect(grouped[MameArtifactGroup.CONSOLES]).toBeUndefined();
     });
   });
 
-describe('RED: Software Lists grouping', () => {
-    it('should group all software lists together', () => {
+  describe('Consoles grouping', () => {
+    it('should group console entries together', () => {
       const dats: DAT[] = [
         {
-          id: 'mame:software:smb1',
+          id: 'mame:nes:smb1',
           source: 'mame',
-          system: 'software-lists',
+          system: 'consoles',
           datVersion: '2024-01-01',
           description: 'Super Mario Bros.',
+          category: 'consoles',
           roms: []
         },
         {
-          id: 'mame:software:zelda',
+          id: 'mame:snes:zelda',
           source: 'mame',
-          system: 'software-lists',
+          system: 'consoles',
           datVersion: '2024-01-01',
-          description: 'The Legend of Zelda',
+          description: 'Zelda',
+          category: 'consoles',
           roms: []
         }
       ];
 
       const grouped = strategy.group(dats);
-      
-      expect(grouped['software-lists']).toHaveLength(2);
-      expect(grouped['arcade']).toBeUndefined();
-    });
 
-    it('should handle mixed console systems in software-lists', () => {
-      const dats: DAT[] = [
-        {
-          id: 'mame:software:nes:smb1',
-          source: 'mame',
-          system: 'software-lists',
-          datVersion: '2024-01-01',
-          description: 'NES: Super Mario Bros.',
-          roms: []
-        },
-        {
-          id: 'mame:software:snes:zelda',
-          source: 'mame',
-          system: 'software-lists',
-          datVersion: '2024-01-01',
-          description: 'SNES: Zelda',
-          roms: []
-        }
-      ];
-
-      const grouped = strategy.group(dats);
-      
-      // Both should be in software-lists, not separated by console
-      expect(grouped['software-lists']).toHaveLength(2);
+      expect(grouped[MameArtifactGroup.CONSOLES]).toHaveLength(2);
+      expect(grouped[MameArtifactGroup.ARCADE]).toBeUndefined();
+      expect(grouped[MameArtifactGroup.COMPUTERS]).toBeUndefined();
     });
   });
 
-describe('RED: HBMAME grouping', () => {
-    it('should group HBMAME entries together', () => {
-      const dats: DAT[] = [
-        {
-          id: 'hbmame:sf2cebh1',
-          source: 'hbmame',
-          system: 'hbmame',
-          datVersion: '2024-01-01',
-          description: 'Street Fighter II (hack)',
-          roms: []
-        },
-        {
-          id: 'hbmame:sf2cebh2',
-          source: 'hbmame',
-          system: 'hbmame',
-          datVersion: '2024-01-01',
-          description: 'Street Fighter II (bootleg)',
-          roms: []
-        }
-      ];
-
-      const grouped = strategy.group(dats);
-      
-      expect(grouped['hbmame']).toHaveLength(2);
-      expect(grouped['arcade']).toBeUndefined();
-    });
-  });
-
-describe('RED: Multimedia grouping', () => {
-    it('should group samples and multimedia together', () => {
-      const dats: DAT[] = [
-        {
-          id: 'mame:multimedia:dkong:samples',
-          source: 'mame',
-          system: 'multimedia',
-          datVersion: '2024-01-01',
-          description: 'Donkey Kong Samples',
-          roms: []
-        },
-        {
-          id: 'mame:multimedia: artwork',
-          source: 'mame',
-          system: 'multimedia',
-          datVersion: '2024-01-01',
-          description: 'MAME Artwork',
-          roms: []
-        }
-      ];
-
-      const grouped = strategy.group(dats);
-      
-      expect(grouped['multimedia']).toHaveLength(2);
-    });
-  });
-
-describe('RED: Mixed source grouping', () => {
-    it('should correctly separate mixed sources into groups', () => {
+  describe('Mixed category grouping', () => {
+    it('should correctly separate mixed categories into groups', () => {
       const dats: DAT[] = [
         {
           id: 'mame:arcade:pacman',
@@ -199,41 +128,35 @@ describe('RED: Mixed source grouping', () => {
           system: 'arcade',
           datVersion: '2024-01-01',
           description: 'Pac-Man',
+          category: 'arcade',
           roms: []
         },
         {
-          id: 'mame:software:smb1',
+          id: 'mame:c64:game1',
           source: 'mame',
-          system: 'software-lists',
+          system: 'computers',
+          datVersion: '2024-01-01',
+          description: 'C64 Game',
+          category: 'computers',
+          roms: []
+        },
+        {
+          id: 'mame:nes:smb1',
+          source: 'mame',
+          system: 'consoles',
           datVersion: '2024-01-01',
           description: 'Super Mario Bros.',
-          roms: []
-        },
-        {
-          id: 'hbmame:sf2cebh1',
-          source: 'hbmame',
-          system: 'hbmame',
-          datVersion: '2024-01-01',
-          description: 'SF2 Hack',
-          roms: []
-        },
-        {
-          id: 'mame:multimedia:samples',
-          source: 'mame',
-          system: 'multimedia',
-          datVersion: '2024-01-01',
-          description: 'Samples',
+          category: 'consoles',
           roms: []
         }
       ];
 
       const grouped = strategy.group(dats);
-      
-      expect(Object.keys(grouped)).toHaveLength(4);
-      expect(grouped['arcade']).toHaveLength(1);
-      expect(grouped['software-lists']).toHaveLength(1);
-      expect(grouped['hbmame']).toHaveLength(1);
-      expect(grouped['multimedia']).toHaveLength(1);
+
+      expect(Object.keys(grouped)).toHaveLength(3);
+      expect(grouped[MameArtifactGroup.ARCADE]).toHaveLength(1);
+      expect(grouped[MameArtifactGroup.COMPUTERS]).toHaveLength(1);
+      expect(grouped[MameArtifactGroup.CONSOLES]).toHaveLength(1);
     });
 
     it('should handle empty input', () => {
@@ -241,21 +164,39 @@ describe('RED: Mixed source grouping', () => {
       expect(Object.keys(grouped)).toHaveLength(0);
     });
 
-    it('should handle unknown systems gracefully', () => {
+    it('should handle uncategorized entries (defaults to computers)', () => {
       const dats: DAT[] = [
         {
-          id: 'unknown:entry',
-          source: 'unknown',
-          system: 'unknown-system',
+          id: 'mame:unknown:entry',
+          source: 'mame',
+          system: 'unknown',
           datVersion: '2024-01-01',
           description: 'Unknown',
           roms: []
         }
       ];
 
-      // Should not throw, put in 'other' group
       const grouped = strategy.group(dats);
-      expect(grouped['other'] || grouped['unknown-system']).toBeDefined();
+      // Uncategorized entries default to computers
+      expect(grouped[MameArtifactGroup.COMPUTERS]).toHaveLength(1);
+    });
+
+    it('should use system name as fallback when category is missing', () => {
+      const dats: DAT[] = [
+        {
+          id: 'mame:arcade:pacman',
+          source: 'mame',
+          system: 'arcade',
+          datVersion: '2024-01-01',
+          description: 'Pac-Man',
+          // No category field
+          roms: []
+        }
+      ];
+
+      const grouped = strategy.group(dats);
+      // Should fallback to system name 'arcade'
+      expect(grouped[MameArtifactGroup.ARCADE]).toHaveLength(1);
     });
   });
 });

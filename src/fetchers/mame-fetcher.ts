@@ -1,36 +1,48 @@
 /**
- * MAME Fetcher - ProgettoSnaps implementation
+ * MAME Fetcher - GitHub Primary + ProgettoSnaps Fallback
  *
- * @intent Fetch DATs from ProgettoSnaps (MAME arcade, software lists, HBMAME)
- * @guarantee Downloads all MAME DAT categories from progettosnaps.net
- * @constraint Extends AbstractFetcher, uses direct HTTP for downloads
- *              Error screenshots captured on any failure for debugging
+ * @intent Fetch MAME DATs from mamedev/mame GitHub repo (computers/consoles) and ProgettoSnaps (arcade)
+ * @guarantee Returns all MAME DATs categorized into 3 groups: arcade, computers, consoles
+ * @constraint No Playwright - uses direct HTTP and GitHub API only
  */
 
-import { chromium, type Page } from 'playwright';
-import path from 'path';
 import fs from 'fs/promises';
-import crypto from 'crypto';
+import path from 'path';
 import { AbstractFetcher, type FetcherOptions } from '../base/base-fetcher.js';
 import { VersionTracker } from '../core/version-tracker.js';
 import type { DAT, RomEntry } from '../types/index.js';
 import { extractGameEntries } from '../core/validator.js';
-import { execSync } from 'child_process';
 
 /**
- * ProgettoSnaps main DAT page URL
+ * MAME GitHub repository info
  */
-const PROGETTO_SNAPS_URL = 'https://www.progettosnaps.net/dats/MAME/';
+const MAME_REPO = {
+  owner: 'mamedev',
+  repo: 'mame',
+  hashPath: 'hash'
+};
 
 /**
- * MAME data source types from ProgettoSnaps
+ * ProgettoSnaps arcade DAT URL
+ * Direct download of the latest MAME arcade DAT
  */
-export enum MameSourceType {
-  ARCADE = 'arcade'
+const PROGETTO_ARCADE_URL = 'https://www.progettosnaps.net/download/?tipo=dat_mame&file=/dats/MAME/MAME.dat';
+
+/**
+ * MAME system categories for hash/ XML files
+ */
+export enum MameSystemCategory {
+  ARCADE = 'arcade',
+  COMPUTERS = 'computers',
+  CONSOLES = 'consoles'
 }
 
+/**
+ * Fetches MAME DATs from GitHub (primary) and ProgettoSnaps (arcade)
+ */
 export class MameFetcher extends AbstractFetcher {
   private outputDir: string;
+  private apiToken: string | undefined;
 
   constructor(
     versionTracker: VersionTracker,
@@ -40,9 +52,10 @@ export class MameFetcher extends AbstractFetcher {
     super(versionTracker, {
       maxRetries: options.maxRetries ?? 3,
       retryDelay: options.retryDelay ?? 5000,
-      rateLimitMs: options.rateLimitMs ?? 2000
+      rateLimitMs: options.rateLimitMs ?? 500 // Be nice to GitHub API
     });
     this.outputDir = outputDir;
+    this.apiToken = process.env.GITHUB_TOKEN;
   }
 
   getSourceName(): string {
@@ -50,216 +63,231 @@ export class MameFetcher extends AbstractFetcher {
   }
 
   /**
-   * Check remote version by finding the latest pack number
+   * Check remote version using MAME GitHub releases
+   * @returns Latest release tag (e.g., "mame0287")
    */
   async checkRemoteVersion(): Promise<string> {
-    try {
-      // Use Playwright to get the page and find the highest pack number
-      const browser = await chromium.launch({ headless: true });
-      const page = await browser.newPage();
-      await page.goto(PROGETTO_SNAPS_URL, { waitUntil: 'load', timeout: 60000 });
-
-      // Get all pack links and find the highest number
-      const links = await page.locator('a[href*="MAME_Dats_"]').all();
-      let maxPack = 0;
-
-      for (const link of links) {
-        const href = await link.getAttribute('href');
-        const match = href?.match(/MAME_Dats_(\d+)\.7z/);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (num > maxPack) maxPack = num;
-        }
-      }
-
-      await browser.close();
-
-      if (maxPack > 0) {
-        return maxPack.toString(); // e.g., "286"
-      }
-
-      return new Date().toISOString().split('T')[0];
-    } catch (err) {
-      console.warn('[mame] Failed to check remote version:', (err as Error).message);
-      return new Date().toISOString().split('T')[0];
-    }
+    const url = `https://api.github.com/repos/${MAME_REPO.owner}/${MAME_REPO.repo}/releases/latest`;
+    const response = await this.fetchWithRetry(url);
+    const data = await response.json() as { tag_name: string };
+    return data.tag_name;
   }
 
   /**
-   * Fetch DATs from ProgettoSnaps
-   * @param onEntry Optional callback for streaming entries (for pipeline compatibility)
+   * Fetch all MAME DATs
+   * - Arcade: From ProgettoSnaps (single DAT file)
+   * - Computers/Consoles: From mamedev/mame hash/ directory
    */
   async fetchDats(onEntry?: (dat: DAT) => void): Promise<DAT[]> {
     await fs.mkdir(this.outputDir, { recursive: true });
 
-    console.log('[mame] Checking for latest MAME pack...');
+    const version = await this.checkRemoteVersion();
+    console.log(`[mame] MAME version: ${version}`);
 
-    // Find the latest pack number
-    const latestPack = await this.findLatestPackNumber();
-    console.log(`[mame] Latest pack: ${latestPack}`);
+    const dats: DAT[] = [];
 
-    if (!latestPack) {
-      throw new Error('Could not find any MAME packs on ProgettoSnaps');
+    // Fetch arcade DAT from ProgettoSnaps
+    console.log('[mame] Fetching arcade DAT from ProgettoSnaps...');
+    const arcadeDats = await this.fetchArcadeDats(version);
+    for (const dat of arcadeDats) {
+      dats.push(dat);
+      onEntry?.(dat);
     }
 
-    // Download the latest pack
-    const packUrl = `https://www.progettosnaps.net/download/?tipo=dat_mame&file=/dats/MAME/packs/MAME_Dats_${latestPack}.7z`;
-    console.log(`[mame] Downloading: ${packUrl}`);
+    // Fetch hash/ XMLs from GitHub
+    console.log('[mame] Fetching software list XMLs from GitHub...');
+    const hashDats = await this.fetchHashDats(version, onEntry);
+    dats.push(...hashDats);
 
-    const zipPath = path.join(this.outputDir, `MAME_Dats_${latestPack}.7z`);
-    await this.downloadFile(packUrl, zipPath);
-
-    // Extract the 7z file
-    console.log('[mame] Extracting...');
-    await this.extract7z(zipPath, this.outputDir);
-
-    // Find and parse all DAT/XML files
-    console.log('[mame] Parsing DAT files...');
-    const dats = await this.parseAllDatFiles(this.outputDir, onEntry);
-
-    console.log(`[mame] Total: ${dats.length} entries`);
+    console.log(`[mame] Total DATs fetched: ${dats.length}`);
 
     // Update version tracking
-    const version = latestPack;
     await this.updateVersion(version);
 
     return dats;
   }
 
   /**
-   * Find the latest pack number by scraping the page
+   * Fetch arcade DAT from ProgettoSnaps
+   * Returns single DAT marked as arcade category
    */
-  private async findLatestPackNumber(): Promise<string | null> {
-    const browser = await chromium.launch({ headless: true });
-    try {
-      const page = await browser.newPage();
-      await page.goto(PROGETTO_SNAPS_URL, { waitUntil: 'load', timeout: 60000 });
+  private async fetchArcadeDats(version: string): Promise<DAT[]> {
+    const response = await this.fetchWithRetry(PROGETTO_ARCADE_URL);
+    const content = await response.text();
 
-      // Get all MAME_Dats links and find the highest number
-      const links = await page.locator('a[href*="MAME_Dats_"]').all();
-      let maxPack = 0;
-
-      for (const link of links) {
-        const href = await link.getAttribute('href');
-        const match = href?.match(/MAME_Dats_(\d+)\.7z/);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (num > maxPack) maxPack = num;
-        }
-      }
-
-      return maxPack > 0 ? maxPack.toString().padStart(3, '0') : null;
-    } finally {
-      await browser.close();
-    }
-  }
-
-  /**
-   * Download a file using fetch (follows redirects)
-   */
-  private async downloadFile(url: string, destPath: string): Promise<void> {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+    const result = extractGameEntries(content);
+    if (!result.valid || result.games.length === 0) {
+      console.warn('[mame] Arcade DAT parse failed or empty');
+      return [];
     }
 
-    const buffer = await response.arrayBuffer();
-    await fs.writeFile(destPath, Buffer.from(buffer));
-    console.log(`[mame] Downloaded: ${path.basename(destPath)}`);
-  }
-
-  /**
-   * Extract 7z file - tries 7z with retries
-   */
-  private async extract7z(archivePath: string, destDir: string, retries = 3): Promise<void> {
-    let lastError: Error | null = null;
-    
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        console.log(`[mame] Extracting ${path.basename(archivePath)} (attempt ${attempt}/${retries})...`);
-        execSync(`7z x "${archivePath}" -o"${destDir}" -y`, { stdio: 'inherit' });
-        console.log('[mame] Extraction complete');
-        return;
-      } catch (err) {
-        lastError = err as Error;
-        console.warn(`[mame] Extraction attempt ${attempt} failed: ${lastError.message}`);
-        if (attempt < retries) {
-          await new Promise(r => setTimeout(r, 2000));
-        }
-      }
-    }
-    
-    throw new Error(`Failed to extract archive after ${retries} attempts: ${lastError?.message}`);
-  }
-
-  /**
-   * Recursively find and parse all DAT/XML files
-   */
-  private async parseAllDatFiles(
-    dirPath: string,
-    onEntry?: (dat: DAT) => void
-  ): Promise<DAT[]> {
     const dats: DAT[] = [];
-
-    async function scanDir(dir: string): Promise<void> {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-
-        if (entry.isDirectory()) {
-          await scanDir(fullPath);
-        } else if (entry.isFile() && /\.(dat|xml)$/i.test(entry.name)) {
-          console.log(`[mame] Parsing: ${entry.name}`);
-
-          try {
-            const content = await fs.readFile(fullPath, 'utf-8');
-            const result = extractGameEntries(content);
-
-            if (result.valid && result.games.length > 0) {
-              const systemName = path.basename(entry.name, path.extname(entry.name));
-
-              for (const game of result.games) {
-                const roms = extractRomsFromGame(game);
-                const dat: DAT = {
-                  id: `${systemName}:${game.name || game.description || 'unknown'}`,
-                  source: 'mame',
-                  system: systemName,
-                  datVersion: new Date().toISOString(),
-                  description: game.name || game.description,
-                  roms
-                };
-
-                if (onEntry) {
-                  onEntry(dat);
-                } else {
-                  dats.push(dat);
-                }
-              }
-            }
-          } catch (parseErr) {
-            console.warn(`[mame] Failed to parse ${entry.name}:`, (parseErr as Error).message);
-          }
-        }
-      }
+    for (const game of result.games) {
+      const roms = extractRomsFromGame(game);
+      const dat: DAT = {
+        id: `mame-arcade:${game.name}`,
+        source: 'mame',
+        system: MameSystemCategory.ARCADE,
+        datVersion: version,
+        description: game.description || game.name,
+        category: MameSystemCategory.ARCADE,
+        roms
+      };
+      dats.push(dat);
     }
 
-    await scanDir(dirPath);
+    console.log(`[mame] Arcade DAT: ${dats.length} entries`);
     return dats;
   }
 
   /**
-   * Capture a screenshot on error for debugging
+   * Fetch all XML files from mamedev/mame hash/ directory
+   * Categorizes each into computers or consoles
    */
-  private async captureErrorScreenshot(page: Page): Promise<void> {
-    try {
-      const screenshotPath = path.join(this.outputDir, 'metadat-mame--error-playwright.png');
-      await page.screenshot({ path: screenshotPath });
-      console.log(`[mame] Error screenshot saved: ${screenshotPath}`);
-    } catch (screenshotErr) {
-      console.warn(`[mame] Failed to capture error screenshot: ${(screenshotErr as Error).message}`);
+  private async fetchHashDats(version: string, onEntry?: (dat: DAT) => void): Promise<DAT[]> {
+    // Get list of XML files from hash/ directory
+    const xmlFiles = await this.listHashFiles();
+    console.log(`[mame] Found ${xmlFiles.length} XML files in hash/`);
+
+    const dats: DAT[] = [];
+    let processed = 0;
+
+    for (const filename of xmlFiles) {
+      try {
+        const category = categorizeHashFile(filename);
+        const url = `https://raw.githubusercontent.com/${MAME_REPO.owner}/${MAME_REPO.repo}/master/hash/${filename}`;
+
+        const response = await this.fetchWithRetry(url);
+        const content = await response.text();
+
+        const result = extractGameEntries(content);
+        if (!result.valid || result.games.length === 0) continue;
+
+        for (const game of result.games) {
+          const roms = extractRomsFromGame(game);
+          const dat: DAT = {
+            id: `${filename.replace('.xml', '')}:${game.name}`,
+            source: 'mame',
+            system: category, // computers or consoles
+            datVersion: version,
+            description: game.description || game.name,
+            category: category,
+            roms
+          };
+          dats.push(dat);
+          onEntry?.(dat);
+        }
+
+        processed++;
+        if (processed % 50 === 0) {
+          console.log(`[mame] Processed ${processed}/${xmlFiles.length} hash files...`);
+        }
+      } catch (err) {
+        console.warn(`[mame] Failed to fetch ${filename}: ${(err as Error).message}`);
+      }
     }
+
+    console.log(`[mame] Hash DATs: ${dats.length} entries from ${processed} files`);
+    return dats;
   }
+
+  /**
+   * List all XML files in the hash/ directory via GitHub API
+   */
+  private async listHashFiles(): Promise<string[]> {
+    const url = `https://api.github.com/repos/${MAME_REPO.owner}/${MAME_REPO.repo}/contents/hash`;
+    const headers: Record<string, string> = {
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'metadat-mame-pipeline'
+    };
+    if (this.apiToken) {
+      headers['Authorization'] = `token ${this.apiToken}`;
+    }
+
+    const response = await this.fetchWithRetry(url, { headers });
+    const data = await response.json();
+
+    if (!Array.isArray(data)) {
+      throw new Error(`Unexpected GitHub API response: ${JSON.stringify(data).slice(0, 200)}`);
+    }
+
+    return data
+      .filter((item: { name: string; type: string }) => item.type === 'file' && item.name.endsWith('.xml'))
+      .map((item: { name: string }) => item.name)
+      .sort();
+  }
+
+  /**
+   * Fetch with retry logic built-in
+   */
+  private async fetchWithRetry(url: string, options: RequestInit = {}): Promise<Response> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        // Simple rate limiting between requests
+        if (this.rateLimitMs > 0 && attempt > 1) {
+          await new Promise(r => setTimeout(r, this.rateLimitMs));
+        }
+        const response = await fetch(url, options);
+
+        if (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0') {
+          const resetTime = parseInt(response.headers.get('x-ratelimit-reset') || '0') * 1000;
+          const waitMs = Math.max(resetTime - Date.now(), 60000);
+          console.warn(`[mame] GitHub rate limit hit, waiting ${Math.round(waitMs / 1000)}s...`);
+          await new Promise(r => setTimeout(r, waitMs));
+          continue;
+        }
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        return response;
+      } catch (err) {
+        lastError = err as Error;
+        if (attempt < this.maxRetries) {
+          const delay = this.retryDelay * Math.pow(2, attempt - 1);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
+  // Rate limiting is handled by base class AbstractFetcher
+}
+
+/**
+ * Categorize a hash/ XML file as computer or console
+ * Uses keyword-based heuristics on the filename
+ */
+function categorizeHashFile(filename: string): MameSystemCategory {
+  const name = filename.toLowerCase().replace('.xml', '');
+
+  // Console keywords
+  const consolePatterns = [
+    /^a26/, /^a52/, /^a78/, // Atari consoles
+    /^nes$/, /^snes/, /^n64/, /^gamecube/, /^wii/, /^switch/, // Nintendo
+    /^sms$/, /^sms_/, /^megadriv/, /^genesis/, /^saturn/, /^dc$/, /^dc_/, // Sega
+    /^psx/, /^ps2/, /^ps3/, /^psp/, // Sony
+    /^xbox/, /^xbox360/, // Microsoft
+    /^3do/, /^jaguar/, /^lynx/, /^atarijag/, // Atari other
+    /^coleco/, /^intv/, /^odyssey/, // Classic
+    /^ngp/, /^ngpc/, /^neogeo/, // SNK
+    /^pce/, /^tg16/, /^pcfx/, /^pcecd/, // NEC
+    /^gb$/, /^gb_/, /^gbc/, /^gba/, /^ds$/, /^ds_/, /^3ds/, // Nintendo handheld
+    /^32x/, /^scd/, /^segacd/, // Sega addons
+    /^vectrex/, /^virtualboy/, /^wonderswan/
+  ];
+
+  for (const pattern of consolePatterns) {
+    if (pattern.test(name)) return MameSystemCategory.CONSOLES;
+  }
+
+  // Default to computers for everything else
+  return MameSystemCategory.COMPUTERS;
 }
 
 /**
@@ -268,7 +296,18 @@ export class MameFetcher extends AbstractFetcher {
 function extractRomsFromGame(game: Record<string, unknown>): RomEntry[] {
   const roms: RomEntry[] = [];
 
-  const romElement = game.rom;
+  // Handle arcade rom elements
+  let romElement = game.rom;
+
+  // Handle software list rom/part elements (nested structure)
+  if (!romElement && game.part) {
+    const part = game.part as Record<string, unknown>;
+    if (part.dataarea) {
+      const dataarea = part.dataarea as Record<string, unknown>;
+      romElement = dataarea.rom;
+    }
+  }
+
   if (!romElement) return roms;
 
   const romArray = Array.isArray(romElement) ? romElement : [romElement];
