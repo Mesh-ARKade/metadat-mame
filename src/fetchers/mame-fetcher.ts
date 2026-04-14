@@ -68,8 +68,9 @@ export class MameFetcher extends AbstractFetcher {
 
   /**
    * Fetch all MAME DATs
-   * - Arcade: From ProgettoSnaps (single DAT file)
-   * - Computers/Consoles: From mamedev/mame hash/ directory
+   * - Arcade: From ProgettoSnaps pack (includes BIOS, CHD, Devices, Samples)
+   * - Computers/Consoles: From mamedev/mame hash/ directory (primary)
+   *                       Falls back to ProgettoSnaps MESS dat if GitHub fails
    */
   async fetchDats(onEntry?: (dat: DAT) => void): Promise<DAT[]> {
     await fs.mkdir(this.outputDir, { recursive: true });
@@ -77,13 +78,26 @@ export class MameFetcher extends AbstractFetcher {
     const version = await this.checkRemoteVersion();
     console.log(`[mame] MAME version: ${version}`);
 
-    // Fetch all DATs from ProgettoSnaps pack
-    // This includes: arcade, mess (computers/consoles), bios, chd, devices, samples, roms
-    console.log('[mame] Fetching DATs from ProgettoSnaps...');
-    const dats = await this.fetchArcadeDats(version);
+    const dats: DAT[] = [];
 
-    for (const dat of dats) {
+    // Fetch arcade DAT from ProgettoSnaps
+    console.log('[mame] Fetching arcade DAT from ProgettoSnaps...');
+    const arcadeDats = await this.fetchArcadeDats(version);
+    for (const dat of arcadeDats) {
+      dats.push(dat);
       onEntry?.(dat);
+    }
+
+    // Fetch computers/consoles from GitHub hash/ (primary source)
+    console.log('[mame] Fetching software list XMLs from GitHub...');
+    let hashDats: DAT[] = [];
+    try {
+      hashDats = await this.fetchHashDats(version, onEntry);
+      dats.push(...hashDats);
+    } catch (err) {
+      console.warn('[mame] GitHub hash/ fetch failed, falling back to ProgettoSnaps MESS...');
+      const messDats = await this.fetchMessDats(version, onEntry);
+      dats.push(...messDats);
     }
 
     console.log(`[mame] Total DATs fetched: ${dats.length}`);
@@ -305,6 +319,139 @@ export class MameFetcher extends AbstractFetcher {
   }
 
   // Rate limiting is handled by base class AbstractFetcher
+
+  /**
+   * Fetch all XML files from mamedev/mame hash/ directory
+   * Categorizes each into computers or consoles for proper grouping
+   */
+  private async fetchHashDats(version: string, onEntry?: (dat: DAT) => void): Promise<DAT[]> {
+    // Get list of XML files from hash/ directory
+    const xmlFiles = await this.listHashFiles();
+    console.log(`[mame] Found ${xmlFiles.length} XML files in hash/`);
+
+    const dats: DAT[] = [];
+    let processed = 0;
+
+    for (const filename of xmlFiles) {
+      try {
+        const category = categorizeHashFile(filename);
+        const url = `https://raw.githubusercontent.com/mamedev/mame/master/hash/${filename}`;
+
+        const response = await this.fetchWithRetry(url);
+        const content = await response.text();
+
+        const result = extractGameEntries(content);
+        if (!result.valid || result.games.length === 0) continue;
+
+        for (const game of result.games) {
+          const roms = extractRomsFromGame(game);
+          const dat: DAT = {
+            id: `${filename.replace('.xml', '')}:${game.name}`,
+            source: 'mame',
+            system: category,
+            datVersion: version,
+            description: game.description || game.name,
+            category: category,
+            roms
+          };
+          dats.push(dat);
+          onEntry?.(dat);
+        }
+
+        processed++;
+        if (processed % 50 === 0) {
+          console.log(`[mame] Processed ${processed}/${xmlFiles.length} hash files...`);
+        }
+      } catch (err) {
+        console.warn(`[mame] Failed to fetch ${filename}: ${(err as Error).message}`);
+      }
+    }
+
+    console.log(`[mame] Hash DATs: ${dats.length} entries from ${processed} files`);
+    return dats;
+  }
+
+  /**
+   * List all XML files in the hash/ directory via GitHub API
+   */
+  private async listHashFiles(): Promise<string[]> {
+    const url = `https://api.github.com/repos/mamedev/mame/contents/hash`;
+    const headers: Record<string, string> = {
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'metadat-mame-pipeline'
+    };
+    if (this.apiToken) {
+      headers['Authorization'] = `token ${this.apiToken}`;
+    }
+
+    const response = await this.fetchWithRetry(url, { headers });
+    const data = await response.json();
+
+    if (!Array.isArray(data)) {
+      throw new Error(`Unexpected GitHub API response: ${JSON.stringify(data).slice(0, 200)}`);
+    }
+
+    return data
+      .filter((item: { name: string; type: string }) => item.type === 'file' && item.name.endsWith('.xml'))
+      .map((item: { name: string }) => item.name)
+      .sort();
+  }
+
+  /**
+   * Fallback: Fetch MESS dat from ProgettoSnaps pack
+   * Used when GitHub hash/ fails
+   */
+  private async fetchMessDats(version: string, onEntry?: (dat: DAT) => void): Promise<DAT[]> {
+    // Re-use the extraction if we already have the pack
+    const packNumber = await this.findLatestPackNumber();
+    const extractDir = path.join(this.outputDir, 'progetto-tmp');
+    const messDatPath = path.join(extractDir, 'DATs', `MAME ${version.replace('mame', '')} (mess).dat`);
+
+    // If pack not extracted, download and extract it
+    if (!fsSync.existsSync(messDatPath)) {
+      const packUrl = `https://www.progettosnaps.net/download/?tipo=dat_mame&file=/dats/MAME/packs/MAME_Dats_${packNumber}.7z`;
+      const packPath = path.join(this.outputDir, `MAME_Dats_${packNumber}.7z`);
+
+      await this.downloadFile(packUrl, packPath);
+      await fs.mkdir(extractDir, { recursive: true });
+      await this.extract7z(packPath, extractDir);
+      await fs.unlink(packPath).catch(() => {});
+    }
+
+    if (!fsSync.existsSync(messDatPath)) {
+      console.warn('[mame] MESS dat not found in pack');
+      return [];
+    }
+
+    const content = await fs.readFile(messDatPath, 'utf-8');
+    const result = extractGameEntries(content);
+
+    if (!result.valid || result.games.length === 0) {
+      console.warn('[mame] MESS dat parse failed or empty');
+      return [];
+    }
+
+    const dats: DAT[] = [];
+    for (const game of result.games) {
+      const roms = extractRomsFromGame(game);
+      // MESS contains both computers and consoles - put in computers for now
+      // Could parse the system to categorize properly
+      const dat: DAT = {
+        id: `mess:${game.name}`,
+        source: 'mame',
+        system: MameSystemCategory.COMPUTERS,
+        datVersion: version,
+        description: game.description || game.name,
+        category: MameSystemCategory.COMPUTERS,
+        roms
+      };
+      dats.push(dat);
+      onEntry?.(dat);
+    }
+
+    console.log(`[mame] MESS fallback DATs: ${dats.length} entries`);
+    return dats;
+  }
 }
 
 /**
