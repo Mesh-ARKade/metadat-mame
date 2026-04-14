@@ -13,6 +13,7 @@ import { execSync } from 'child_process';
 import { AbstractFetcher, type FetcherOptions } from '../base/base-fetcher.js';
 import { VersionTracker } from '../core/version-tracker.js';
 import type { DAT, RomEntry } from '../types/index.js';
+import { DATSchema } from '../types/index.js';
 import { extractGameEntries } from '../core/validator.js';
 
 /**
@@ -161,7 +162,11 @@ export class MameFetcher extends AbstractFetcher {
           category: category,
           roms
         };
-        dats.push(dat);
+        // Validate before adding
+        const validated = validateDat(dat);
+        if (validated) {
+          dats.push(validated);
+        }
       }
 
       console.log(`[mame] ${filename}: ${result.games.length} entries -> ${category}`);
@@ -354,8 +359,12 @@ export class MameFetcher extends AbstractFetcher {
             category: category,
             roms
           };
-          dats.push(dat);
-          onEntry?.(dat);
+          // Validate before adding
+          const validated = validateDat(dat);
+          if (validated) {
+            dats.push(validated);
+            onEntry?.(validated);
+          }
         }
 
         processed++;
@@ -448,8 +457,12 @@ export class MameFetcher extends AbstractFetcher {
         category: category,
         roms
       };
-      dats.push(dat);
-      onEntry?.(dat);
+      // Validate before adding
+      const validated = validateDat(dat);
+      if (validated) {
+        dats.push(validated);
+        onEntry?.(validated);
+      }
     }
 
     // Log breakdown
@@ -497,6 +510,19 @@ export class MameFetcher extends AbstractFetcher {
     // Default to computers for everything else
     return MameSystemCategory.COMPUTERS;
   }
+}
+
+/**
+ * Validate a DAT entry using Zod schema
+ * Returns null if invalid
+ */
+function validateDat(dat: unknown): DAT | null {
+  const result = DATSchema.safeParse(dat);
+  if (!result.success) {
+    console.warn(`[mame] DAT validation failed: ${result.error.errors.map(e => e.message).join(', ')}`);
+    return null;
+  }
+  return result.data;
 }
 
 /**

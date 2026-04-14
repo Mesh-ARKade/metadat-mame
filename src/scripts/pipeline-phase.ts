@@ -15,7 +15,7 @@ import readline from 'readline';
 import { VersionTracker } from '../core/version-tracker.js';
 import { compress, trainDictionary, compressWithDictionary, compressWithImmutableDict, hasImmutableDictionary } from '../core/compressor.js';
 import { GitHubReleaser } from '../core/releaser.js';
-import { validatePipelineState, type DAT, type Artifact } from '../types/index.js';
+import { validatePipelineState, DATSchema, ArtifactSchema, type DAT, type Artifact } from '../types/index.js';
 
 // MAME-specific imports
 import { MameFetcher } from '../fetchers/mame-fetcher.js';
@@ -52,13 +52,42 @@ function slugify(name: string): string {
     .replace(/^-|-$/g, '');
 }
 
+/**
+ * Validate a DAT entry using Zod
+ */
+function validateDatEntry(dat: unknown): DAT | null {
+  const result = DATSchema.safeParse(dat);
+  if (!result.success) {
+    console.warn(`[phase] DAT validation failed: ${result.error.errors.map(e => e.message).join(', ')}`);
+    return null;
+  }
+  return result.data;
+}
+
+/**
+ * Validate an Artifact using Zod
+ */
+function validateArtifact(artifact: unknown): Artifact | null {
+  const result = ArtifactSchema.safeParse(artifact);
+  if (!result.success) {
+    console.warn(`[phase] Artifact validation failed: ${result.error.errors.map(e => e.message).join(', ')}`);
+    return null;
+  }
+  return result.data;
+}
+
 async function loadState(): Promise<PipelineState | null> {
   try {
     const data = await fs.readFile(STATE_FILE, 'utf-8');
     const parsed = JSON.parse(data);
-    // Simple validation
-    if (!parsed.source) return null;
-    return parsed;
+    // Zod validation
+    try {
+      validatePipelineState(parsed);
+      return parsed;
+    } catch (err) {
+      console.warn('[phase] State validation failed, ignoring saved state:', (err as Error).message);
+      return null;
+    }
   } catch {
     return null;
   }
@@ -66,6 +95,12 @@ async function loadState(): Promise<PipelineState | null> {
 
 async function saveState(state: PipelineState, phase?: 'fetch' | 'group' | 'compress'): Promise<void> {
   if (phase) state.phase = phase;
+  // Validate before saving
+  try {
+    validatePipelineState(state);
+  } catch (err) {
+    console.warn('[phase] State validation failed before save:', (err as Error).message);
+  }
   await fs.writeFile(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
@@ -138,7 +173,13 @@ async function runPhase(options: PhaseOptions): Promise<void> {
 
       for await (const line of rl) {
         if (!line.trim()) continue;
-        const dat = JSON.parse(line) as DAT;
+        const parsed = JSON.parse(line);
+        // Validate DAT before grouping
+        const dat = validateDatEntry(parsed);
+        if (!dat) {
+          console.warn('[phase:group] Skipping invalid DAT entry');
+          continue;
+        }
         const groupName = groupStrategy.getGroup(dat);
         
         if (!groupStreams.has(groupName)) {
@@ -237,8 +278,14 @@ async function runPhase(options: PhaseOptions): Promise<void> {
         
         for await (const line of rl) {
           if (!line.trim()) continue;
+          const parsed = JSON.parse(line);
+          // Validate DAT before counting
+          const dat = validateDatEntry(parsed);
+          if (!dat) {
+            console.warn('[phase:compress] Skipping invalid DAT entry');
+            continue;
+          }
           entryCount++;
-          const dat = JSON.parse(line) as DAT;
           systemCounts.set(dat.system, (systemCounts.get(dat.system) || 0) + 1);
         }
 
@@ -254,13 +301,21 @@ async function runPhase(options: PhaseOptions): Promise<void> {
         
         let op: 'upsert' | 'unchanged' = 'upsert';
         if (state.lastArtifacts?.[artifact.name] === artifact.sha256) op = 'unchanged';
-        
-        artifacts.push({
+
+        const fullArtifact = {
           ...artifact,
           entryCount,
           op,
           systems: Array.from(systemCounts.entries()).map(([name, gameCount]) => ({ id: name, name, gameCount }))
-        });
+        };
+
+        // Validate artifact before adding
+        const validatedArtifact = validateArtifact(fullArtifact);
+        if (validatedArtifact) {
+          artifacts.push(validatedArtifact);
+        } else {
+          console.warn(`[phase:compress] Skipping invalid artifact: ${artifact.name}`);
+        }
       }
       
       // Create manifest
@@ -291,6 +346,19 @@ async function runPhase(options: PhaseOptions): Promise<void> {
     case 'release': {
       console.log('[phase:release] Starting release...');
       if (!state.artifacts) throw new Error('No artifacts found');
+
+      // Validate all artifacts before release
+      const validArtifacts: Artifact[] = [];
+      for (const artifact of state.artifacts) {
+        const validated = validateArtifact(artifact);
+        if (validated) {
+          validArtifacts.push(validated);
+        } else {
+          console.warn(`[phase:release] Filtering out invalid artifact from release`);
+        }
+      }
+      state.artifacts = validArtifacts;
+      console.log(`[phase:release] Validated ${validArtifacts.length} artifacts`);
       
       const versionTracker = new VersionTracker('./versions.json');
       const releaser = new GitHubReleaser(
