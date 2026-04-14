@@ -7,7 +7,9 @@
  */
 
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { AbstractFetcher, type FetcherOptions } from '../base/base-fetcher.js';
 import { VersionTracker } from '../core/version-tracker.js';
 import type { DAT, RomEntry } from '../types/index.js';
@@ -23,10 +25,10 @@ const MAME_REPO = {
 };
 
 /**
- * ProgettoSnaps arcade DAT URL
- * Direct download of the latest MAME arcade DAT
+ * ProgettoSnaps main page URL
+ * Used to find the latest pack number
  */
-const PROGETTO_ARCADE_URL = 'https://www.progettosnaps.net/download/?tipo=dat_mame&file=/dats/MAME/MAME.dat';
+const PROGETTO_SNAPS_URL = 'https://www.progettosnaps.net/dats/MAME/';
 
 /**
  * MAME system categories for hash/ XML files
@@ -109,13 +111,35 @@ export class MameFetcher extends AbstractFetcher {
 
   /**
    * Fetch arcade DAT from ProgettoSnaps
-   * Returns single DAT marked as arcade category
+   * Finds latest pack, downloads 7z, extracts MAME.dat
    */
   private async fetchArcadeDats(version: string): Promise<DAT[]> {
-    const response = await this.fetchWithRetry(PROGETTO_ARCADE_URL);
-    const content = await response.text();
+    // Find latest pack number from ProgettoSnaps page
+    const packNumber = await this.findLatestPackNumber();
+    console.log(`[mame] Latest ProgettoSnaps pack: ${packNumber}`);
 
+    // Download the 7z pack
+    const packUrl = `https://www.progettosnaps.net/download/?tipo=dat_mame&file=/dats/MAME/packs/MAME_Dats_${packNumber}.7z`;
+    const packPath = path.join(this.outputDir, `MAME_Dats_${packNumber}.7z`);
+
+    console.log(`[mame] Downloading pack: ${packUrl}`);
+    await this.downloadFile(packUrl, packPath);
+
+    // Extract the 7z file
+    const extractDir = path.join(this.outputDir, 'arcade-tmp');
+    await fs.mkdir(extractDir, { recursive: true });
+    await this.extract7z(packPath, extractDir);
+
+    // Find and parse the MAME.dat file
+    const mameDatPath = path.join(extractDir, 'MAME.dat');
+    if (!fsSync.existsSync(mameDatPath)) {
+      console.warn('[mame] MAME.dat not found in extracted pack');
+      return [];
+    }
+
+    const content = await fs.readFile(mameDatPath, 'utf-8');
     const result = extractGameEntries(content);
+
     if (!result.valid || result.games.length === 0) {
       console.warn('[mame] Arcade DAT parse failed or empty');
       return [];
@@ -136,8 +160,70 @@ export class MameFetcher extends AbstractFetcher {
       dats.push(dat);
     }
 
+    // Cleanup temp files
+    await fs.unlink(packPath).catch(() => {});
+    await fs.rm(extractDir, { recursive: true, force: true }).catch(() => {});
+
     console.log(`[mame] Arcade DAT: ${dats.length} entries`);
     return dats;
+  }
+
+  /**
+   * Find the latest pack number from ProgettoSnaps page
+   */
+  private async findLatestPackNumber(): Promise<string> {
+    const response = await this.fetchWithRetry(PROGETTO_SNAPS_URL);
+    const html = await response.text();
+
+    // Find all MAME_Dats_XXX.7z links and extract highest number
+    const regex = /MAME_Dats_(\d+)\.7z/g;
+    let maxPack = 0;
+    let match;
+
+    while ((match = regex.exec(html)) !== null) {
+      const num = parseInt(match[1], 10);
+      if (num > maxPack) maxPack = num;
+    }
+
+    if (maxPack === 0) {
+      throw new Error('Could not find any MAME packs on ProgettoSnaps');
+    }
+
+    return maxPack.toString();
+  }
+
+  /**
+   * Download a file using fetch (follows redirects)
+   */
+  private async downloadFile(url: string, destPath: string): Promise<void> {
+    const response = await this.fetchWithRetry(url);
+    const buffer = await response.arrayBuffer();
+    await fs.writeFile(destPath, Buffer.from(buffer));
+    console.log(`[mame] Downloaded: ${path.basename(destPath)}`);
+  }
+
+  /**
+   * Extract 7z file using system 7z command
+   */
+  private async extract7z(archivePath: string, destDir: string, retries = 3): Promise<void> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`[mame] Extracting ${path.basename(archivePath)} (attempt ${attempt}/${retries})...`);
+        execSync(`7z x "${archivePath}" -o"${destDir}" -y`, { stdio: 'pipe' });
+        console.log('[mame] Extraction complete');
+        return;
+      } catch (err) {
+        lastError = err as Error;
+        console.warn(`[mame] Extraction attempt ${attempt} failed: ${lastError.message}`);
+        if (attempt < retries) {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+    }
+
+    throw new Error(`Failed to extract archive after ${retries} attempts: ${lastError?.message}`);
   }
 
   /**
