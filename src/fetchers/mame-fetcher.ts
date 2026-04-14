@@ -334,7 +334,7 @@ export class MameFetcher extends AbstractFetcher {
 
     for (const filename of xmlFiles) {
       try {
-        const category = categorizeHashFile(filename);
+        const category = this.categorizeHashFileInternal(filename);
         const url = `https://raw.githubusercontent.com/mamedev/mame/master/hash/${filename}`;
 
         const response = await this.fetchWithRetry(url);
@@ -434,55 +434,69 @@ export class MameFetcher extends AbstractFetcher {
     const dats: DAT[] = [];
     for (const game of result.games) {
       const roms = extractRomsFromGame(game);
-      // MESS contains both computers and consoles - put in computers for now
-      // Could parse the system to categorize properly
+
+      // Get software list name from entry to categorize properly
+      const softwareList = (game.softwarelist as string) || '';
+      const category = this.categorizeBySoftwareList(softwareList);
+
       const dat: DAT = {
-        id: `mess:${game.name}`,
+        id: `${softwareList}:${game.name}`,
         source: 'mame',
-        system: MameSystemCategory.COMPUTERS,
+        system: category,
         datVersion: version,
         description: game.description || game.name,
-        category: MameSystemCategory.COMPUTERS,
+        category: category,
         roms
       };
       dats.push(dat);
       onEntry?.(dat);
     }
 
-    console.log(`[mame] MESS fallback DATs: ${dats.length} entries`);
+    // Log breakdown
+    const consoleCount = dats.filter(d => d.category === MameSystemCategory.CONSOLES).length;
+    const computerCount = dats.filter(d => d.category === MameSystemCategory.COMPUTERS).length;
+    console.log(`[mame] MESS fallback DATs: ${dats.length} entries (${consoleCount} consoles, ${computerCount} computers)`);
+
     return dats;
   }
-}
 
-/**
- * Categorize a hash/ XML file as computer or console
- * Uses keyword-based heuristics on the filename
- */
-function categorizeHashFile(filename: string): MameSystemCategory {
-  const name = filename.toLowerCase().replace('.xml', '');
-
-  // Console keywords
-  const consolePatterns = [
-    /^a26/, /^a52/, /^a78/, // Atari consoles
-    /^nes$/, /^snes/, /^n64/, /^gamecube/, /^wii/, /^switch/, // Nintendo
-    /^sms$/, /^sms_/, /^megadriv/, /^genesis/, /^saturn/, /^dc$/, /^dc_/, // Sega
-    /^psx/, /^ps2/, /^ps3/, /^psp/, // Sony
-    /^xbox/, /^xbox360/, // Microsoft
-    /^3do/, /^jaguar/, /^lynx/, /^atarijag/, // Atari other
-    /^coleco/, /^intv/, /^odyssey/, // Classic
-    /^ngp/, /^ngpc/, /^neogeo/, // SNK
-    /^pce/, /^tg16/, /^pcfx/, /^pcecd/, // NEC
-    /^gb$/, /^gb_/, /^gbc/, /^gba/, /^ds$/, /^ds_/, /^3ds/, // Nintendo handheld
-    /^32x/, /^scd/, /^segacd/, // Sega addons
-    /^vectrex/, /^virtualboy/, /^wonderswan/
-  ];
-
-  for (const pattern of consolePatterns) {
-    if (pattern.test(name)) return MameSystemCategory.CONSOLES;
+  /**
+   * Categorize a software list name as computer or console
+   * Same logic as categorizeHashFile but for software list names
+   */
+  private categorizeBySoftwareList(listName: string): MameSystemCategory {
+    return this.categorizeHashFileInternal(listName);
   }
 
-  // Default to computers for everything else
-  return MameSystemCategory.COMPUTERS;
+  /**
+   * Internal categorization logic shared between GitHub and MESS fallback
+   */
+  private categorizeHashFileInternal(filename: string): MameSystemCategory {
+    const name = filename.toLowerCase().replace('.xml', '');
+
+    // Console keywords (same patterns as standalone function)
+    const consolePatterns = [
+      /^a26/, /^a52/, /^a78/, // Atari consoles
+      /^nes$/, /^snes/, /^n64/, /^gamecube/, /^wii/, /^switch/, // Nintendo
+      /^sms$/, /^sms_/, /^megadriv/, /^genesis/, /^saturn/, /^dc$/, /^dc_/, // Sega
+      /^psx/, /^ps2/, /^ps3/, /^psp/, // Sony
+      /^xbox/, /^xbox360/, // Microsoft
+      /^3do/, /^jaguar/, /^lynx/, /^atarijag/, // Atari other
+      /^coleco/, /^intv/, /^odyssey/, // Classic
+      /^ngp/, /^ngpc/, /^neogeo/, // SNK
+      /^pce/, /^tg16/, /^pcfx/, /^pcecd/, // NEC
+      /^gb$/, /^gb_/, /^gbc/, /^gba/, /^ds$/, /^ds_/, /^3ds/, // Nintendo handheld
+      /^32x/, /^scd/, /^segacd/, // Sega addons
+      /^vectrex/, /^virtualboy/, /^wonderswan/
+    ];
+
+    for (const pattern of consolePatterns) {
+      if (pattern.test(name)) return MameSystemCategory.CONSOLES;
+    }
+
+    // Default to computers for everything else
+    return MameSystemCategory.COMPUTERS;
+  }
 }
 
 /**
