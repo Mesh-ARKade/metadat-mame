@@ -130,12 +130,13 @@ export class MameFetcher extends AbstractFetcher {
     await fs.mkdir(extractDir, { recursive: true });
     await this.extract7z(packPath, extractDir);
 
-    // Find and parse the MAME.dat file
-    const mameDatPath = path.join(extractDir, 'MAME.dat');
-    if (!fsSync.existsSync(mameDatPath)) {
+    // Find and parse the MAME.dat file (search recursively)
+    const mameDatPath = await this.findMameDat(extractDir);
+    if (!mameDatPath) {
       console.warn('[mame] MAME.dat not found in extracted pack');
       return [];
     }
+    console.log(`[mame] Found MAME.dat at: ${mameDatPath}`);
 
     const content = await fs.readFile(mameDatPath, 'utf-8');
     const result = extractGameEntries(content);
@@ -200,6 +201,25 @@ export class MameFetcher extends AbstractFetcher {
     const buffer = await response.arrayBuffer();
     await fs.writeFile(destPath, Buffer.from(buffer));
     console.log(`[mame] Downloaded: ${path.basename(destPath)}`);
+  }
+
+  /**
+   * Recursively find MAME.dat in extraction directory
+   */
+  private async findMameDat(dir: string): Promise<string | null> {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const found = await this.findMameDat(fullPath);
+        if (found) return found;
+      } else if (entry.isFile() && entry.name.toLowerCase() === 'mame.dat') {
+        return fullPath;
+      }
+    }
+
+    return null;
   }
 
   /**
