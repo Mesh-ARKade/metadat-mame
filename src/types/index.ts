@@ -166,7 +166,7 @@ export const DATSchema = z.object({
   id: z.string().min(1),
   source: z.string().min(1),
   system: z.string().min(1),
-  datVersion: z.string().datetime(),
+  datVersion: z.string().min(1), // Version string (e.g., "mame0287", "2024-01-01")
   roms: z.array(RomEntrySchema),
   description: z.string().optional(),
   category: z.string().optional(),
