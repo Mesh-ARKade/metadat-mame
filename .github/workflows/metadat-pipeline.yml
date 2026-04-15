@@ -65,15 +65,14 @@ jobs:
       - name: Auto-commit immutable dictionary
         if: env.SKIP_PIPELINE != 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           if [[ `git status --porcelain src/data/catalog.dict` ]]; then
             git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git config --local user.name "github-actions[bot]"
-            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/Mesh-ARKade/metadat-mame.git
             git add src/data/catalog.dict
             git commit -m "chore: save immutable zstd dictionary [skip ci]"
-            git push
+            git push https://x-access-token:${GH_TOKEN}@github.com/Mesh-ARKade/metadat-mame.git HEAD:main
           else
             echo "No dictionary changes to commit."
           fi
