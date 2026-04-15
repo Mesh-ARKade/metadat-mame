@@ -2,7 +2,7 @@ name: METADAT Pipeline
 
 on:
   schedule:
-    - cron: '0 9 * * *'
+    - cron: '0 8 * * 3'
   workflow_dispatch:
     inputs:
       dry-run:
