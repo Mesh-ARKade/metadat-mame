@@ -64,6 +64,8 @@ jobs:
 
       - name: Auto-commit immutable dictionary
         if: env.SKIP_PIPELINE != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           if [[ `git status --porcelain src/data/catalog.dict` ]]; then
             git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
